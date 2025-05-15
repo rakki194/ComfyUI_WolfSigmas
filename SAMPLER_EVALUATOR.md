@@ -60,10 +60,9 @@ def wolf_sampler():
         eta = sampler_options.get('eta', 1.0)
         s_noise = sampler_options.get('s_noise', 1.0)
         
-        # To use the main seed from KSampler for the noise_sampler_func (consistent with k-diffusion):
-        # ComfyUI passes the KSampler's main seed in extra_args under the key 'noise_seed'.
-        current_seed = extra_args.get("noise_seed", None)
-        noise_sampler_func = k_diffusion_sampling.default_noise_sampler(x, seed=current_seed)
+        # The seed for the noise sampler is fetched from extra_args.
+        seed = extra_args.get("seed", None)
+        noise_sampler_func = k_diffusion_sampling.default_noise_sampler(x, seed=seed)
         
         s_in = x.new_ones([x.shape[0]])
         num_steps = len(sigmas) - 1
@@ -113,10 +112,9 @@ def wolf_sampler():
         eta = sampler_options.get('eta', 1.0)
         s_noise = sampler_options.get('s_noise', 1.0)
 
-        # To use the main seed from KSampler for the noise_sampler_func (consistent with k-diffusion):
-        # ComfyUI passes the KSampler's main seed in extra_args under the key 'noise_seed'.
-        current_seed = extra_args.get("noise_seed", None)
-        noise_sampler_func = k_diffusion_sampling.default_noise_sampler(x, seed=current_seed)
+        # The seed for the noise sampler is fetched from extra_args.
+        seed = extra_args.get("seed", None)
+        noise_sampler_func = k_diffusion_sampling.default_noise_sampler(x, seed=seed)
         
         s_in = x.new_ones([x.shape[0]])
         num_steps = len(sigmas) - 1
@@ -134,10 +132,12 @@ def wolf_sampler():
             if sigma_down == 0: # sigmas[i+1] == 0 implies sigma_down will be 0 from get_ancestral_step with eta=1
                 x = denoised
             else:
-                # Calculate derivative d = (x - D(x, sigma)) / sigma
-                d = k_diffusion_sampling.to_d(x, sigmas[i], denoised)
-                dt = sigma_down - sigmas[i] # Change in sigma for the deterministic step
-                x = x + d * dt # Deterministic step
+                # Deterministic step using lerp towards sigma_down:
+                # x_new = (1 - w) * x_old + w * denoised_target
+                # weight w = (1 - sigma_down / sigmas[i])
+                # This is equivalent to x_old + ((x_old - denoised) / sigmas[i]) * (sigma_down - sigmas[i])
+                weight = (1. - (sigma_down / sigmas[i]))
+                x = x.lerp(denoised, weight)
                 
                 if sigma_up > 0: # Add noise if there's a stochastic component
                     current_noise = noise_sampler_func(sigmas[i], sigmas[i + 1])
@@ -241,14 +241,19 @@ Let $\\sigma_i$ be `sigmas[i]` and $\\sigma_{i+1}$ be `sigmas[i+1]`. The `eta` p
     If $\\sigma_{down} = 0$ (which occurs if $\\sigma_{i+1}=0$ and $\\eta=1$), then:
     \\\\[ x_{i+1} = \\hat{x_0} \\\\]
 
-4. **Calculate Derivative ($d_i$) with `to_d`:**
-    The derivative (direction) is calculated as:
+4. **Calculate Derivative ($d_i$) with `to_d` (Alternative Formulation Step):**
+    The derivative (direction) can be calculated as:
     \\\\[ d_i = \\text{to_d}(x_i, \\sigma_i, \\hat{x_0}) = \\frac{x_i - \\hat{x_0}}{\\sigma_i} \\\\]
+    This $d_i$ is used in the traditional Euler formulation: $x_i + d_i \\cdot (\\sigma_{down} - \\sigma_i)$.
 
 5. **Perform Combined Euler Step (Deterministic + Stochastic):**
-    The latent is updated in one go:
-    \\\\[ x_{i+1} = x_i + d_i \\cdot (\\sigma_{down} - \\sigma_i) + \\mathcal{N}(0,I) \\cdot s_{noise} \\cdot \\sigma_{up} \\\\]
-    The term $d_i \\cdot (\\sigma_{down} - \\sigma_i)$ is the deterministic Euler step towards $\\sigma_{down}$.
+    The latent can be updated using `lerp` for the deterministic part, and then adding noise:
+    * **Deterministic part (Euler step to $\\sigma_{down}$ using `lerp`):**
+        Let $w = (1 - \\frac{\\sigma_{down}}{\\sigma_i})$.
+        \\\\[ x\' = x_i \\cdot (1-w) + \\hat{x_0} \\cdot w = x_i \\cdot (\\frac{\\sigma_{down}}{\\sigma_i}) + \\hat{x_0} \\cdot (1 - \\frac{\\sigma_{down}}{\\sigma_i}) \\\\]
+        This is equivalent to the standard Euler step: $x\' = x_i + \\frac{x_i - \\hat{x_0}}{\\sigma_i} (\\sigma_{down} - \\sigma_i)$.
+    * **Stochastic part:**
+        \\\\[ x_{i+1} = x\' + \\mathcal{N}(0,I) \\cdot s_{noise} \\cdot \\sigma_{up} \\\\]
     The term $\\mathcal{N}(0,I) \\cdot s_{noise} \\cdot \\sigma_{up}$ is the added ancestral noise. If $\\sigma_{up}$ is zero (e.g., if $\\eta=0$ or $\\sigma_{i+1} \\ge \\sigma_i$), no noise is added by this term.
 
 **Python Implementation Notes:**
