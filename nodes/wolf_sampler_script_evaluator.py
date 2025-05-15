@@ -52,7 +52,7 @@ def wolf_sampler():
     # This function is called by the WolfSamplerScriptEvaluator.
     # It must return the actual sampling function.
     
-    def actual_custom_euler_sampler(model, x_initial, sigmas_schedule, *, extra_args, callback, disable, **sampler_options):
+    def wolf_custom_euler_sampler(model, x_initial, sigmas_schedule, *, extra_args, callback, disable, **sampler_options):
         # model: Patched model from ComfyUI (the UNet wrapper that handles CFG internally)
         # x_initial: Initial latent tensor (noise for txt2img, or noised image for img2img)
         # sigmas_schedule: The sigma schedule tensor (e.g., [sigma_max, ..., sigma_min, 0.0])
@@ -132,7 +132,7 @@ def wolf_sampler():
             print("Wolf Custom Euler Sampler: Sampling loop completed.")
         return latents # Return the final denoised latents
 
-    return actual_custom_euler_sampler
+    return wolf_custom_euler_sampler
 """
 
     @classmethod

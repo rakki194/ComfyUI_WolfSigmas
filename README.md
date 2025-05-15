@@ -6,6 +6,9 @@ This custom node pack for ComfyUI provides a suite of tools for generating and m
 
 - [ComfyUI Wolf Sigmas](#comfyui-wolf-sigmas)
   - [Table of Contents](#table-of-contents)
+  - [Advanced](#advanced)
+    - [Scriptable Sigma Generator](#scriptable-sigma-generator)
+    - [Scriptable Sampler Generator](#scriptable-sampler-generator)
   - [General Sigma Utilities](#general-sigma-utilities)
     - [Get Sigmas (🐺)](#get-sigmas-)
     - [Set Sigmas from JSON (🐺)](#set-sigmas-from-json-)
@@ -60,7 +63,6 @@ This custom node pack for ComfyUI provides a suite of tools for generating and m
     - [Wolf Sigma Geometric Progression](#wolf-sigma-geometric-progression)
     - [Wolf Sigma Polynomial](#wolf-sigma-polynomial)
     - [Sigma Tanh Generator (🐺)](#sigma-tanh-generator-)
-  - [Advanced / Scriptable Sigma Generators](#advanced--scriptable-sigma-generators)
   - [12-Step Sigma Schedulers (13 Sigmas)](#12-step-sigma-schedulers-13-sigmas)
     - [Wolf Sigma Linear (12-Step)](#wolf-sigma-linear-12-step)
     - [Wolf Sigma Arctan (12-Step)](#wolf-sigma-arctan-12-step)
@@ -78,6 +80,22 @@ This custom node pack for ComfyUI provides a suite of tools for generating and m
     - [12-Step Chroma Sigma Schedulers](#12-step-chroma-sigma-schedulers)
       - [Wolf Sigma Chroma Karras (12-Step)](#wolf-sigma-chroma-karras-12-step)
       - [Wolf Sigma Chroma Biased Karras (12-Step)](#wolf-sigma-chroma-biased-karras-12-step)
+
+---
+
+## Advanced
+
+### Scriptable Sigma Generator
+
+For advanced users who need maximum flexibility, the `Wolf Sigma Script Evaluator (🐺)` node allows for the creation of custom sigma schedules by executing a user-provided Python script. This provides a powerful way to define complex or experimental schedules.
+
+For detailed information on how to use the script evaluator, its inputs, outputs, scripting capabilities, and example scripts, please see the [Wolf Sigma Script Evaluator Documentation](./SIGMA_EVALUATOR.md).
+
+### Scriptable Sampler Generator
+
+Similarly, for users wishing to implement entirely custom sampling algorithms, the `Wolf Sampler Script Evaluator (🐺)` node enables the definition of new samplers through Python scripts. This node integrates with ComfyUI's KSampler system, allowing custom samplers to be used like any built-in sampler.
+
+For detailed information on how to use the sampler script evaluator, its scripting requirements, parameters, and example sampler implementations (like Euler and Euler Ancestral), please see the [Wolf Sampler Script Evaluator Documentation](./SAMPLER_EVALUATOR.md).
 
 ---
 
@@ -775,14 +793,6 @@ These nodes provide flexible ways to generate sigma schedules based on mathemati
 
 ---
 
-## Advanced / Scriptable Sigma Generators
-
-For advanced users who need maximum flexibility, the `Wolf Sigma Script Evaluator (🐺)` node allows for the creation of custom sigma schedules by executing a user-provided Python script. This provides a powerful way to define complex or experimental schedules.
-
-For detailed information on how to use the script evaluator, its inputs, outputs, scripting capabilities, and example scripts, please see the [Wolf Sigma Script Evaluator Documentation](./SIGMA_EVALUATOR.md).
-
----
-
 ## 12-Step Sigma Schedulers (13 Sigmas)
 
 These nodes generate sigma schedules for a 12-step sampling process, resulting in 13 sigma values (12 active sigmas from `sigma_max` down to `sigma_min_positive`, plus a final 0.0). Many are hardcoded versions of their N-Step counterparts for convenience.
@@ -990,53 +1000,5 @@ These are 12-step schedulers specifically configured with Chroma-inspired defaul
   - `min_epsilon_spacing`: `FLOAT` (default: 1e-7, min: 1e-9, max: 0.1, step: 1e-7)
 - **Outputs:**
   - `SIGMAS`: `SIGMAS` - Tensor with 13 Chroma biased Karras-spaced sigmas.
-
----
-
-## Advanced / Scriptable Sampler Generators
-
-For advanced users who need maximum flexibility in defining sampling logic, the `Wolf Sampler Script Evaluator (🐺)` node allows for the creation of custom samplers by executing a user-provided Python script. This provides a powerful way to define complex or experimental sampling routines that can be directly used with KSampler nodes.
-
-### Wolf Sampler Script Evaluator (🐺)
-
-- **Class:** `WolfSamplerScriptEvaluator`
-- **Display Name:** `Wolf Sampler Script Evaluator (🐺)`
-- **Category:** `sampling/ksampler_wolf`
-- **Description:** Evaluates a Python script to define a custom sampler function. The script must define a function named `wolf_sampler()` which, when called, returns the actual sampler function. This actual sampler function will be wrapped in a ComfyUI `SAMPLER` object compatible with KSampler nodes.
-- **Inputs**:
-  - `script`: `STRING` (multiline) - The Python script defining the custom sampler. See the default script content for the required structure and an example.
-  - `seed` (optional): `INT` - An optional seed value that can be made available to the script if needed (e.g., via `__script_seed__` global variable).
-- **Outputs**:
-  - `SAMPLER`: `SAMPLER` - The custom sampler object that can be connected to a KSampler's `sampler` input.
-  - `status_message`: `STRING` - A message indicating the outcome of the script evaluation (e.g., success or error details).
-
-**Scripting Details for `Wolf Sampler Script Evaluator`**:
-
-The Python script provided to this node must define a top-level function: `wolf_sampler()`.
-This function takes no arguments and must return *another function*, which is the actual sampler implementation.
-
-The **actual sampler function** must have the following signature:
-`def actual_sampler_function(model_wrap, sigmas, extra_args, callback, noise_tensor, latent_image, denoise_mask, disable_pbar, **kwargs):`
-
-- `model_wrap`: The ComfyUI model wrapper (usually an instance of `comfy.model_patcher.ModelPatcher` or a compatible callable). You call this with `denoised_latents = model_wrap(current_latents, current_sigma, **model_call_extra_args)`. The `model_call_extra_args` is typically a dictionary like `{'cond': extra_args['cond'], 'uncond': extra_args['uncond'], 'cond_scale': extra_args['cond_scale']}`.
-- `sigmas`: A 1D tensor containing the sigma values for each step in the schedule (e.g., `[sigma_max, ..., sigma_min, 0.0]`).
-- `extra_args`: A dictionary passed from the KSampler, containing:
-  - `'cond'`: Positive conditioning tensor.
-  - `'uncond'`: Negative conditioning tensor.
-  - `'cond_scale'`: The CFG (Classifier-Free Guidance) scale value (float).
-  - `'noise_seed'` (optional): An integer seed, useful if your sampler needs to generate its own noise for specific techniques (distinct from `noise_tensor`).
-  - `'s_churn'`, `'s_tmin'`, `'s_tmax'`, `'s_noise'`: Common parameters for some advanced samplers.
-  - `'image_cond'` (optional): Image conditioning, e.g., for ControlNets.
-  - `'cfg_scale_function'` (optional): A function that can modify `cond_scale` dynamically during sampling.
-- `callback`: A function to call for previews, e.g., `callback(current_step, x0_prediction, current_latents, total_steps)`.
-- `noise_tensor`: The initial noise tensor for the entire sampling process (e.g., for txt2img). This is pure, unprocessed noise.
-- `latent_image`: The starting latent tensor. For txt2img, this is typically the same as `noise_tensor`. For img2img or inpainting, this will be the (potentially partially noised) input latent.
-- `denoise_mask` (optional): A mask tensor used for inpainting. Values are typically 0 or 1.
-- `disable_pbar`: A boolean; if `True`, the progress bar should be suppressed.
-- `**kwargs`: For additional or future KSampler options.
-
-The **actual sampler function** is responsible for the sampling loop (iterating through `sigmas`) and should return the final denoised latent tensor.
-
-Refer to the default script in the node for a practical example that wraps the standard Euler sampler.
 
 ---
