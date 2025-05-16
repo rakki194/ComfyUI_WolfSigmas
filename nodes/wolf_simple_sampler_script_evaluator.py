@@ -2,17 +2,18 @@ import torch
 import comfy.samplers
 import comfy.utils
 import comfy.model_management
-import nodes  # Import nodes for access to KSampler's lists if needed for default/example script
+import nodes
 import traceback
+
 from comfy.k_diffusion import (
     sampling as k_diffusion_sampling_global,
-)  # Import for fallback and script globals
+)
 
 
 class WolfSimpleSamplerScriptEvaluator:
     CATEGORY = "sampling/ksampler_wolf"
-    RETURN_TYPES = ("SAMPLER", "STRING")
-    RETURN_NAMES = ("SAMPLER", "status_message")
+    RETURN_TYPES = ("SAMPLER",)
+    RETURN_NAMES = ("SAMPLER",)
     FUNCTION = "evaluate_simple_sampler_script"
 
     _DEFAULT_SCRIPT_SIMPLE = """
@@ -20,69 +21,27 @@ class WolfSimpleSamplerScriptEvaluator:
 #
 # This script directly implements the sampling loop.
 # The following variables are pre-defined and available for you to use:
-#   model: The ComfyUI patched model object (e.g., comfy.model_patcher.ModelPatcher).
-#          Call it like: model(current_latents, current_sigma_step_tensor, **extra_args_for_model_call)
-#   x_initial: The initial latent tensor (noise for txt2img, noised image for img2img).
-#   sigmas_schedule: A 1D tensor of sigma values for each step (e.g., [sigma_max, ..., sigma_min, 0.0]).
-#   extra_args: Dictionary containing 'cond', 'uncond', 'cond_scale', 'noise_seed' (optional), 'image_cond' (optional), etc.
-#   callback: The callback function for previews. Signature: callback({'i', 'denoised', 'x', 'sigma', ...})
-#   disable: Boolean; if True, the progress bar should be suppressed (your script should respect this if it prints progress).
-#   sampler_options: Dictionary with additional sampler-specific options from KSAMPLER's extra_options.
+#   model, x_initial, sigmas_schedule, extra_args, callback, disable, sampler_options
 #
 # Your script MUST assign the final denoised latents to a variable named 'latents'.
-#
-# Example: Custom Euler Sampler Implementation (Simplified)
 
-import torch # Good practice, though 'torch' is usually available globally.
+import torch
 
-# These variables are passed in from the evaluator:
-# model, x_initial, sigmas_schedule, extra_args, callback, disable, sampler_options
-
-print(f"Wolf Simple Sampler: Initializing...")
-print(f"Wolf Simple Sampler: Num sigma entries: {len(sigmas_schedule)}, x_initial shape: {x_initial.shape}")
-# print(f"Wolf Simple Sampler: extra_args keys: {list(extra_args.keys())}")
-# print(f"Wolf Simple Sampler: sampler_options keys: {list(sampler_options.keys())}")
-
-# Make a copy of the initial latents to work on.
 current_latents = x_initial.clone()
-
-# The number of sampling steps is one less than the number of sigmas.
 num_sampling_steps = len(sigmas_schedule) - 1
 
 for i in range(num_sampling_steps):
     sigma_current = sigmas_schedule[i]
     sigma_next = sigmas_schedule[i+1]
-
-    if not disable: # Respect the 'disable' flag for progress outputs
-        print(f"Wolf Simple Sampler: Step {i+1}/{num_sampling_steps}, sigma: {sigma_current:.4f} -> {sigma_next:.4f}")
-
-    # 1. Predict the denoised sample (x0_hat) using the model
-    # The 'model' handles CFG internally. Ensure sigma_current is a tensor for the model call.
+    # latents_for_denoising = current_latents.clone() # Not needed without debug
     denoised_prediction = model(current_latents, sigma_current.unsqueeze(0), **extra_args)
-
-    # 2. Calculate the derivative 'd'
     d = (current_latents - denoised_prediction) / sigma_current
-    
-    # 3. Perform the Euler step
-    dt = sigma_next - sigma_current # Change in sigma (will be negative)
+    dt = sigma_next - sigma_current
     current_latents = current_latents + d * dt
     
-    # Invoke the callback for previews
     if callback is not None:
-        callback_payload = {
-            'i': i,                            # Current step index (0-indexed)
-            'denoised': denoised_prediction,   # The D(x) prediction
-            'x': current_latents,              # The current latents x_t (after this step's update)
-            'sigma': sigmas_schedule,          # The full sigma schedule tensor
-            # 'sigma_hat': sigma_current       # Current sigma_t (optional, k_callback might not use it)
-        }
-        callback(callback_payload)
+        callback({'i': i, 'denoised': denoised_prediction, 'x': current_latents, 'sigma': sigmas_schedule})
 
-if not disable:
-    print("Wolf Simple Sampler: Sampling loop completed.")
-
-# CRITICAL: Assign the final result to the 'latents' variable.
-# This is what the evaluator will return from the sampling process.
 latents = current_latents
 """
 
@@ -102,122 +61,81 @@ latents = current_latents
         }
 
     def evaluate_simple_sampler_script(self, script):
-        status_message = "Script evaluation started."
 
-        # This function will be wrapped by comfy.samplers.KSAMPLER
-        # It must match the signature that KSAMPLER's internal logic expects to call.
         def actual_simple_sampler_function(
-            model_patched_unet,  # Renamed for clarity in this scope
-            initial_latent_x,  # Renamed for clarity
-            sigmas_sched,  # Renamed for clarity
+            model_patched_unet,
+            initial_latent_x,
+            sigmas_sched,
             *,
-            extra_args,  # CORRECTED from extra_args_dict
-            callback,  # CORRECTED from callback_fn
-            disable,  # CORRECTED from disable_pbar
-            **sampler_options,  # CORRECTED from sampler_options_dict
+            extra_args,
+            callback,
+            disable,
+            **sampler_options,
         ):
             script_locals = {
                 "model": model_patched_unet,
                 "x_initial": initial_latent_x,
                 "sigmas_schedule": sigmas_sched,
-                "extra_args": extra_args,  # USE CORRECTED NAME
-                "callback": callback,  # USE CORRECTED NAME
-                "disable": disable,  # USE CORRECTED NAME
-                "sampler_options": sampler_options,  # USE CORRECTED NAME
-                "latents": None,  # Initialize to ensure it exists
+                "extra_args": extra_args,
+                "callback": callback,
+                "disable": disable,
+                "sampler_options": sampler_options,
+                "latents": None,
             }
-            # Globals available to the script
             script_globals = {
                 "torch": torch,
                 "comfy": comfy,
                 "nodes": nodes,
                 "k_diffusion_sampling": k_diffusion_sampling_global,
-                "__builtins__": __builtins__,  # Ensure basic builtins are available
+                "__builtins__": __builtins__,
             }
-
             exec(script, script_globals, script_locals)
-
             if "latents" not in script_locals or script_locals["latents"] is None:
-                raise NameError(
-                    "Script must define and assign a tensor to the 'latents' variable."
-                )
+                raise NameError("Script must assign to 'latents'.")
             return script_locals["latents"]
 
         try:
-            if script is None or not isinstance(script, str):
-                raise ValueError("Script is None or not a string.")
-
-            # We don't compile or exec here directly at the top level.
-            # Instead, we pass the actual_simple_sampler_function (which will do the exec)
-            # to KSAMPLER.
-
-            # Test exec once to catch early syntax errors, though runtime errors inside the sampler
-            # will be caught by the KSAMPLER or the execution environment.
-            # This is a lightweight check.
             compile(script, "<string>", "exec")
-
-            sampler_obj = comfy.samplers.KSAMPLER(
-                actual_simple_sampler_function, extra_options={}, inpaint_options={}
+            # Create a standard KSAMPLER object for the first output
+            sampler_object_for_ksampler_node = comfy.samplers.KSAMPLER(
+                actual_simple_sampler_function
             )
-            status_message = "Script prepared successfully. SAMPLER object created."
-            return (sampler_obj, status_message)
 
+            return (sampler_object_for_ksampler_node,)
         except Exception as e:
             tb_str = traceback.format_exc()
-            error_message = (
-                f"Error preparing simple sampler script: {e}\nTraceback:\n{tb_str}"
-            )
+            error_message = f"Error preparing script: {e}\\nTraceback:\\n{tb_str}"
             print(error_message)
             try:
-                # Fallback to standard Euler sampler
-                euler_func = k_diffusion_sampling_global.sample_euler
 
-                def default_sampler_func_wrapper(
-                    model_patched_unet,
-                    initial_latent_x,
-                    sigmas_sched,
-                    *,
-                    extra_args_dict,
-                    callback_fn,
-                    disable_pbar,
-                    **kwargs_options,
-                ):
-                    return euler_func(
-                        model=model_patched_unet,
-                        x=initial_latent_x,
-                        sigmas=sigmas_sched,
-                        extra_args=extra_args_dict,
-                        callback=callback_fn,
-                        disable=disable_pbar,
-                        **kwargs_options,
+                def fallback_sampler_function(*args, **kwargs):
+                    return k_diffusion_sampling_global.sample_euler(
+                        model=args[0],
+                        x=args[1],
+                        sigmas=args[2],
+                        extra_args=kwargs.get("extra_args"),
+                        callback=kwargs.get("callback"),
+                        disable=kwargs.get("disable"),
                     )
 
-                fallback_sampler = comfy.samplers.KSAMPLER(
-                    default_sampler_func_wrapper, extra_options={}, inpaint_options={}
+                fallback_ksampler_obj = comfy.samplers.KSAMPLER(
+                    fallback_sampler_function
                 )
-                status_message = f"ERROR: {error_message}\nFALLBACK TO 'euler' SAMPLER."
-                return (fallback_sampler, status_message)
+                print(f"ERROR: {error_message}\\nFALLBACK TO 'euler'.")
+                return (fallback_ksampler_obj,)
             except Exception as fallback_e:
-                final_error_message = f"CRITICAL ERROR: Failed to prepare script AND failed to load fallback 'euler': {fallback_e}\nOriginal error: {error_message}"
-                print(final_error_message)
+                final_err_msg = (  # Renamed for clarity
+                    f"CRITICAL: Script error AND fallback Euler failed: {fallback_e}"
+                )
+                print(final_err_msg)
 
                 def error_sampler_func(*args, **kwargs):
                     raise RuntimeError(
-                        f"Simple sampler script failed and fallback also failed. Original error: {error_message}"
+                        f"Sampler script failed, fallback failed. Original: {error_message}"
                     )
 
-                if hasattr(comfy, "samplers") and hasattr(comfy.samplers, "KSAMPLER"):
-                    error_sampler_obj = comfy.samplers.KSAMPLER(error_sampler_func)
-                    return (error_sampler_obj, final_error_message)
-                else:
-
-                    class DummySampler:
-                        def sample(*args, **kwargs):
-                            raise RuntimeError(
-                                f"Simple sampler script failed, fallback failed, KSAMPLER unavailable. Original error: {error_message}"
-                            )
-
-                    return (DummySampler(), final_error_message)
+                error_ksampler_obj = comfy.samplers.KSAMPLER(error_sampler_func)
+                return (error_ksampler_obj,)
 
 
 NODE_CLASS_MAPPINGS = {
