@@ -111,9 +111,17 @@ The Proportional Denoised Stepping (PDS) sampler is an alternative, deterministi
 
 **Core Logic:**
 
-1. At each sampling step `i`, given the `current_latents` at noise level `sigma_current`, the model is queried to predict the fully denoised latent, `denoised_prediction`.
-2. A `step_proportion` is calculated based on the current and next sigma values: `(sigma_current - sigma_next) / (sigma_current + epsilon)`, where `epsilon` is a small value to prevent division by zero. This proportion represents the relative reduction in noise scheduled for the current step.
-3. The `current_latents` are updated by linearly interpolating towards the `denoised_prediction` using this `step_proportion`. The update rule is: `current_latents = current_latents + step_proportion * (denoised_prediction - current_latents)`.
+Let $x_i$ be the latents at step $i$ with noise level $\sigma_i$.
+Let $x_0(x_i, \sigma_i)$ be the model's prediction of the denoised image from $x_i$ at noise level $\sigma_i$.
+
+1. At each sampling step `i`, given the `current_latents` ($x_i$) at noise level `sigma_current` ($\sigma_i$), the model is queried to predict the fully denoised latent, `denoised_prediction` ($x_0(x_i, \sigma_i)$).
+2. A `step_proportion` ($p_i$) is calculated based on the current and next sigma values:
+   $$ p_i = \frac{\sigma_i - \sigma_{i+1}}{\sigma_i + \epsilon} $$
+   where $\epsilon$ is a small value to prevent division by zero. This proportion represents the relative reduction in noise scheduled for the current step.
+3. The `current_latents` ($x_{i+1}$) are updated by linearly interpolating towards the `denoised_prediction` using this `step_proportion`. The update rule is:
+   $$ x_{i+1} = x_i + p_i \cdot (x_0(x_i, \sigma_i) - x_i) $$
+   This can also be expressed as:
+   $$ x_{i+1} = (1 - p_i)x_i + p_i x_0(x_i, \sigma_i) $$
 
 **Key Characteristics:**
 
@@ -176,12 +184,19 @@ The Momentum-Guided Denoising (MGD) sampler is an experimental method that intro
 
 **Core Logic:**
 
-1. **Initialization:** A `momentum_d` tensor, representing the accumulated directional momentum, is initialized to zeros. A hyperparameter `beta` (typically between 0 and 1, e.g., 0.4) controls the influence of past directions on the current momentum.
+Let $x_i$ be the latents at step $i$ with noise level $\sigma_i$.
+Let $x_0(x_i, \sigma_i)$ be the model's prediction of the denoised image from $x_i$ at $\sigma_i$.
+The momentum term at step $i$ is $m_i$, initialized with $m_{-1} = 0$.
+
+1. **Initialization:** A `momentum_d` tensor ($m_i$), representing the accumulated directional momentum, is initialized to zeros ($m_{-1} = 0$). A hyperparameter `beta` ($\beta$, typically between 0 and 1, e.g., 0.4) controls the influence of past directions on the current momentum.
 2. **At each sampling step `i`:**
-    a.  The model predicts the `denoised_prediction` from `current_latents` at `sigma_current`.
-    b.  The "instantaneous" Euler-like direction, `d_current`, is calculated as `(current_latents - denoised_prediction) / sigma_current`.
-    c.  The `momentum_d` is updated via an exponential moving average: `momentum_d = beta * momentum_d + (1 - beta) * d_current`.
-    d.  The actual step is taken using this updated `momentum_d` as the direction: `current_latents = current_latents + momentum_d * (sigma_next - sigma_current)`.
+    a.  The model predicts the `denoised_prediction` ($x_0(x_i, \sigma_i)$) from `current_latents` ($x_i$) at `sigma_current` ($\sigma_i$).
+    b.  The "instantaneous" Euler-like direction, `d_current` ($d_{\text{current}, i}$), is calculated as:
+        $$ d_{\text{current}, i} = \frac{x_i - x_0(x_i, \sigma_i)}{\sigma_i} $$
+    c.  The `momentum_d` ($m_i$) is updated via an exponential moving average:
+        $$ m_i = \beta \cdot m_{i-1} + (1 - \beta) \cdot d_{\text{current}, i} $$
+    d.  The actual step is taken using this updated `momentum_d` as the direction. The latents $x_{i+1}$ are updated:
+        $$ x_{i+1} = x_i + m_i \cdot (\sigma_{i+1} - \sigma_i) $$
 
 **Key Characteristics:**
 

@@ -20,6 +20,7 @@ from .nodes.wolf_sigma_script_evaluator import WolfSigmaScriptEvaluator
 from .nodes.wolf_sampler_script_evaluator import WolfSamplerScriptEvaluator
 from .nodes.wolf_simple_sampler_script_evaluator import WolfSimpleSamplerScriptEvaluator
 
+
 NODE_CLASS_MAPPINGS = {
     "WolfSigmasGet": WolfSigmasGet,
     "WolfSigmasSet": WolfSigmasSet,
