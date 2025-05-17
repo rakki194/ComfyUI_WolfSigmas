@@ -42,9 +42,9 @@ class WolfPlotSamplerStatsNode:
         return {
             "required": {
                 "trigger": (
-                    "*",
+                    "LATENT",
                     {"forceInput": True},
-                ),  # Accepts any data to act as a trigger
+                ),
                 "plot_width": ("INT", {"default": 800, "min": 200, "max": 4096}),
                 "plot_height": ("INT", {"default": 1000, "min": 200, "max": 4096}),
                 "font_size": ("INT", {"default": 10, "min": 5, "max": 20}),

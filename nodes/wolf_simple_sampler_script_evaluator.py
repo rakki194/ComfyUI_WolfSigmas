@@ -52,11 +52,11 @@ current_latents = x_initial.clone() # This is x_0 (initial noisy latent)
 num_sampling_steps = len(sigmas_schedule) - 1
 
 if LOG_TO_CONSOLE:
-    print(f"[WolfSimpleSampler] Starting sampling. Total steps: {num_sampling_steps}")
+    print(f"[WolfSimpleSamplerScript] Starting sampling. Total steps: {num_sampling_steps}")
     if num_sampling_steps > 0: # Only log initial if there are steps to take
         initial_mean = current_latents.mean().item()
         initial_std = current_latents.std().item()
-        print(f"[WolfSimpleSampler] Initial Latent (x_0): Mean={initial_mean:.4f}, Std={initial_std:.4f}")
+        print(f"[WolfSimpleSamplerScript] Initial Latent (x_0): Mean={initial_mean:.4f}, Std={initial_std:.4f}")
 
 for i in range(num_sampling_steps):
     sigma_current = sigmas_schedule[i]    # sigma_i
@@ -79,7 +79,7 @@ for i in range(num_sampling_steps):
     
     # Console Logging
     if LOG_TO_CONSOLE and current_step_for_log % CONSOLE_LOG_STEP_INTERVAL == 0:
-        print(f"[WolfSimpleSampler] Step {current_step_for_log}/{num_sampling_steps}: Sigma_i={sigma_current.item():.4f} -> Sigma_{'{i+1}'}={sigma_next.item():.4f}")
+        print(f"[WolfSimpleSamplerScript] Step {current_step_for_log}/{num_sampling_steps}: Sigma_i={sigma_current.item():.4f} -> Sigma_{'{i+1}'}={sigma_next.item():.4f}")
         print(f"    Latent (x_i input): Mean={latent_mean_val_xi:.4f}, Std={latent_std_val_xi:.4f}")
         print(f"    Denoised (x0_pred_i): Mean={denoised_mean_val_x0_pred_i:.4f}, Std={denoised_std_val_x0_pred_i:.4f}")
 
@@ -115,13 +115,13 @@ for i in range(num_sampling_steps):
 if LOG_TO_CONSOLE and num_sampling_steps > 0: # Only log final if steps were taken
     final_mean = current_latents.mean().item()
     final_std = current_latents.std().item()
-    print(f"[WolfSimpleSampler] Final Latent (output x_N): Mean={final_mean:.4f}, Std={final_std:.4f}")
+    print(f"[WolfSimpleSamplerScript] Final Latent (output x_N): Mean={final_mean:.4f}, Std={final_std:.4f}")
 
 if num_sampling_steps == 0: # If no steps (e.g. total_steps = 0 for some schedulers)
     if LOG_TO_CONSOLE:
-        print(f"[WolfSimpleSampler] No sampling steps taken. Returning initial latents.")
+        print(f"[WolfSimpleSamplerScript] No sampling steps taken. Returning initial latents.")
 
-print(f"[WolfSimpleSampler] Sampling finished.")
+print(f"[WolfSimpleSamplerScript] Sampling finished.")
 latents = current_latents # This is x_N (final denoised latent)
 """
 
@@ -141,6 +141,9 @@ latents = current_latents # This is x_N (final denoised latent)
         }
 
     def evaluate_simple_sampler_script(self, script):
+        print(
+            "[WolfSimpleSamplerEvaluator] DEBUG: evaluate_simple_sampler_script called."
+        )
 
         def actual_simple_sampler_function(
             model_patched_unet,
@@ -152,6 +155,9 @@ latents = current_latents # This is x_N (final denoised latent)
             disable,
             **sampler_options,
         ):
+            print(
+                "[WolfSimpleSamplerEvaluator] DEBUG: actual_simple_sampler_function called (this is good, means KSampler is using us)."
+            )
             script_locals = {
                 "model": model_patched_unet,
                 "x_initial": initial_latent_x,
@@ -170,36 +176,92 @@ latents = current_latents # This is x_N (final denoised latent)
                 "k_diffusion_sampling": k_diffusion_sampling_global,
                 "__builtins__": __builtins__,
             }
-            exec(script, script_globals, script_locals)
+
+            print("[WolfSimpleSamplerEvaluator] DEBUG: About to execute user script.")
+            try:
+                exec(script, script_globals, script_locals)
+                print(
+                    "[WolfSimpleSamplerEvaluator] DEBUG: User script execution finished."
+                )
+            except Exception as e_script:
+                tb_script = traceback.format_exc()
+                print(
+                    f"[WolfSimpleSamplerEvaluator] ERROR during user script execution: {e_script}\\nTraceback:\\n{tb_script}"
+                )
+                # Even if script errors, we must return something or KSampler will hang/error.
+                # Fallback logic below in the outer try-except will handle creating a fallback sampler.
+                # Here, we ensure 'latents' is at least None so the NameError isn't raised immediately.
+                script_locals["latents"] = (
+                    initial_latent_x  # or None, but initial_latent_x is safer
+                )
+                script_locals["collected_stats_output"] = {"error": str(e_script)}
+
             if "latents" not in script_locals or script_locals["latents"] is None:
-                raise NameError("Script must assign to 'latents'.")
+                print(
+                    "[WolfSimpleSamplerEvaluator] ERROR: Script did not assign to 'latents' or assigned None."
+                )
+                # This would ideally be caught by the outer try-except if it leads to an issue,
+                # but an explicit check and assignment can prevent KSampler from breaking.
+                # However, the current structure will raise NameError if 'latents' is not set,
+                # which is then caught by the outer try-except.
+                # If it's None, it might pass here but fail in KSampler.
+                # Let's rely on the NameError for "not in script_locals".
+                if script_locals.get("latents") is None:
+                    # If script ran but latents is None, this is a script logic issue.
+                    # We'll let it proceed and KSampler will likely complain, or it's intended if steps = 0.
+                    pass
 
             # Store collected stats
-            WolfSimpleSamplerScriptEvaluator._LAST_RUN_STATS = script_locals.get(
-                "collected_stats_output"
+            stats_from_script = script_locals.get("collected_stats_output")
+            print(
+                f"[WolfSimpleSamplerEvaluator] DEBUG: Stats collected from script: {stats_from_script}"
             )
+            WolfSimpleSamplerScriptEvaluator._LAST_RUN_STATS = stats_from_script
 
-            return script_locals["latents"]
+            # Ensure 'latents' exists, even if the script failed to set it, to avoid KSampler errors.
+            # The outer try-except handles script compilation/major definition errors.
+            # This part handles runtime issues within the script related to 'latents'.
+            final_latents = script_locals.get("latents")
+            if final_latents is None:
+                print(
+                    "[WolfSimpleSamplerEvaluator] WARNING: 'latents' is None after script execution. Returning initial_latent_x to KSampler."
+                )
+                final_latents = initial_latent_x  # Fallback to initial latents if script failed to produce any.
+
+            return final_latents
 
         try:
+            print("[WolfSimpleSamplerEvaluator] DEBUG: Compiling script...")
             compile(script, "<string>", "exec")
+            print("[WolfSimpleSamplerEvaluator] DEBUG: Script compiled successfully.")
             # Create a standard KSAMPLER object for the first output
             sampler_object_for_ksampler_node = comfy.samplers.KSAMPLER(
                 actual_simple_sampler_function
             )
-
+            print(
+                "[WolfSimpleSamplerEvaluator] DEBUG: KSAMPLER object created successfully."
+            )
             return (sampler_object_for_ksampler_node,)
         except Exception as e:
             tb_str = traceback.format_exc()
-            error_message = f"Error preparing script: {e}\\nTraceback:\\n{tb_str}"
+            error_message = f"[WolfSimpleSamplerEvaluator] Error preparing script: {e}\\nTraceback:\\n{tb_str}"
             print(error_message)
             try:
+                print(
+                    "[WolfSimpleSamplerEvaluator] DEBUG: Attempting to create fallback Euler sampler."
+                )
 
                 def fallback_sampler_function(*args, **kwargs):
+                    # This function signature matches what comfy.samplers.KSAMPLER expects for its func.
+                    # args[0] is model, args[1] is x, args[2] is sigmas.
+                    # kwargs will contain extra_args, callback, disable.
+                    print(
+                        "[WolfSimpleSamplerEvaluator] DEBUG: Fallback Euler sampler function called."
+                    )
                     return k_diffusion_sampling_global.sample_euler(
-                        model=args[0],
-                        x=args[1],
-                        sigmas=args[2],
+                        model=args[0],  # model_patched_unet
+                        x=args[1],  # initial_latent_x
+                        sigmas=args[2],  # sigmas_sched
                         extra_args=kwargs.get("extra_args"),
                         callback=kwargs.get("callback"),
                         disable=kwargs.get("disable"),
@@ -208,12 +270,12 @@ latents = current_latents # This is x_N (final denoised latent)
                 fallback_ksampler_obj = comfy.samplers.KSAMPLER(
                     fallback_sampler_function
                 )
-                print(f"ERROR: {error_message}\\nFALLBACK TO 'euler'.")
+                print(
+                    f"[WolfSimpleSamplerEvaluator] WARNING: {error_message}\\nFALLBACK TO 'euler' sampler object created."
+                )
                 return (fallback_ksampler_obj,)
             except Exception as fallback_e:
-                final_err_msg = (  # Renamed for clarity
-                    f"CRITICAL: Script error AND fallback Euler failed: {fallback_e}"
-                )
+                final_err_msg = f"[WolfSimpleSamplerEvaluator] CRITICAL: Script error AND fallback Euler failed: {fallback_e}"
                 print(final_err_msg)
 
                 def error_sampler_func(*args, **kwargs):
@@ -222,6 +284,9 @@ latents = current_latents # This is x_N (final denoised latent)
                     )
 
                 error_ksampler_obj = comfy.samplers.KSAMPLER(error_sampler_func)
+                print(
+                    "[WolfSimpleSamplerEvaluator] CRITICAL: Returning an error-raising sampler object."
+                )
                 return (error_ksampler_obj,)
 
 

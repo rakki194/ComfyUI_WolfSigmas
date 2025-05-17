@@ -19,6 +19,7 @@ from .nodes.wolf_sigma_reverse_and_rescale import WolfSigmaReverseAndRescale
 from .nodes.wolf_sigma_script_evaluator import WolfSigmaScriptEvaluator
 from .nodes.wolf_sampler_script_evaluator import WolfSamplerScriptEvaluator
 from .nodes.wolf_simple_sampler_script_evaluator import WolfSimpleSamplerScriptEvaluator
+from .nodes.wolf_plot_sampler_stats import WolfPlotSamplerStatsNode
 from .nodes.wolf_scriptable_empty_latent import WolfScriptableEmptyLatent
 from .nodes.wolf_simple_scriptable_empty_latent import WolfSimpleScriptableEmptyLatent
 from .nodes.wolf_scriptable_noise import WolfScriptableNoise
@@ -52,6 +53,7 @@ NODE_CLASS_MAPPINGS = {
     "WolfSigmaScriptEvaluator": WolfSigmaScriptEvaluator,
     "WolfSamplerScriptEvaluator": WolfSamplerScriptEvaluator,
     "WolfSimpleSamplerScriptEvaluator": WolfSimpleSamplerScriptEvaluator,
+    "WolfPlotSamplerStatsNode": WolfPlotSamplerStatsNode,
     "WolfScriptableEmptyLatent": WolfScriptableEmptyLatent,
     "WolfSimpleScriptableEmptyLatent": WolfSimpleScriptableEmptyLatent,
     "WolfScriptableNoise": WolfScriptableNoise,
@@ -87,6 +89,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "WolfSigmaScriptEvaluator": "Wolf Sigma Script Evaluator (🐺)",
     "WolfSamplerScriptEvaluator": "Wolf Sampler Script Evaluator (🐺)",
     "WolfSimpleSamplerScriptEvaluator": "Wolf Simple Sampler Script (🐺)",
+    "WolfPlotSamplerStatsNode": "Wolf Plot Sampler Stats (🐺)",
     "WolfScriptableEmptyLatent": "Scriptable Empty Latent (Perlin) (🐺)",
     "WolfSimpleScriptableEmptyLatent": "Simple Scriptable Empty Latent (🐺)",
     "WolfScriptableNoise": "Scriptable Noise (🐺)",

@@ -203,18 +203,18 @@ def wolf_sampler():
                     initial_latent_x,
                     sigmas_sched,
                     *,
-                    extra_args_dict,
-                    callback_fn,
-                    disable_pbar,
+                    extra_args,
+                    callback,
+                    disable,
                     **kwargs_options,
                 ):
                     return euler_func(
                         model=model_patched_unet,
                         x=initial_latent_x,
                         sigmas=sigmas_sched,
-                        extra_args=extra_args_dict,
-                        callback=callback_fn,
-                        disable=disable_pbar,
+                        extra_args=extra_args,
+                        callback=callback,
+                        disable=disable,
                         **kwargs_options,
                     )
 
