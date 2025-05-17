@@ -2,6 +2,115 @@ import torch
 import comfy.model_management
 import traceback
 import math  # For the default script or user scripts
+import torch.nn.functional as F  # Needed for Perlin noise
+
+# MAX_RESOLUTION fallback for Perlin noise functions if not otherwise available
+# (though less critical here than in empty latent, good for robustness if functions are copied directly)
+try:
+    from nodes import MAX_RESOLUTION
+except ImportError:
+    try:
+        from comfy.comfy_types import MAX_RESOLUTION
+    except ImportError:
+        MAX_RESOLUTION = 16384  # Fallback
+
+
+# --- Perlin Noise Generation Functions (copied from wolf_scriptable_empty_latent.py) ---
+def _fade(t):
+    return 6 * t**5 - 15 * t**4 + 10 * t**3
+
+
+def rand_perlin_2d(shape, res, fade_func=_fade, device="cpu", generator=None):
+    # Ensure device is a torch.device object for linspace, not a string
+    target_device = torch.device(device if isinstance(device, str) else "cpu")
+
+    delta = (res[0] / shape[0], res[1] / shape[1])
+    d = (shape[0] // res[0], shape[1] // res[1])
+
+    grid_y = torch.linspace(0, res[0], shape[0], device=target_device)
+    grid_x = torch.linspace(0, res[1], shape[1], device=target_device)
+    grid = torch.stack(torch.meshgrid(grid_y, grid_x, indexing="ij"), dim=-1) % 1
+
+    rand_opts = {"device": target_device}
+    if generator:
+        rand_opts["generator"] = generator
+    angles = 2 * math.pi * torch.rand(res[0] + 1, res[1] + 1, **rand_opts)
+    gradients = torch.stack((torch.cos(angles), torch.sin(angles)), dim=-1)
+
+    target_shape_hw = (shape[0], shape[1])
+
+    def get_resized_gradient(slice_y, slice_x):
+        grad_tile = gradients[slice_y[0] : slice_y[1], slice_x[0] : slice_x[1]]
+        repeat_y = max(1, int(d[0])) if d[0] > 0 else 1
+        repeat_x = max(1, int(d[1])) if d[1] > 0 else 1
+        repeated_grad = grad_tile.repeat_interleave(repeat_y, 0).repeat_interleave(
+            repeat_x, 1
+        )
+        repeated_grad_permuted = repeated_grad.permute(2, 0, 1).unsqueeze(0)
+        resized_grad_permuted = F.interpolate(
+            repeated_grad_permuted,
+            size=target_shape_hw,
+            mode="bilinear",
+            align_corners=False,
+        )
+        return resized_grad_permuted.squeeze(0).permute(1, 2, 0)
+
+    g00 = get_resized_gradient((0, res[0]), (0, res[1]))
+    g10 = get_resized_gradient((1, res[0] + 1), (0, res[1]))
+    g01 = get_resized_gradient((0, res[0]), (1, res[1] + 1))
+    g11 = get_resized_gradient((1, res[0] + 1), (1, res[1] + 1))
+
+    dot = lambda grad, shift_y, shift_x: (
+        torch.stack((grid[..., 0] + shift_y, grid[..., 1] + shift_x), dim=-1) * grad
+    ).sum(dim=-1)
+
+    n00 = dot(g00, 0, 0)
+    n10 = dot(g10, -1, 0)
+    n01 = dot(g01, 0, -1)
+    n11 = dot(g11, -1, -1)
+
+    t = fade_func(grid)
+
+    lerp_x1 = torch.lerp(n00, n10, t[..., 0])
+    lerp_x2 = torch.lerp(n01, n11, t[..., 0])
+    lerped = torch.lerp(lerp_x1, lerp_x2, t[..., 1])
+
+    return math.sqrt(2) * lerped
+
+
+def rand_perlin_2d_octaves(
+    shape,
+    res,
+    octaves=1,
+    persistence=0.5,
+    frequency_factor=2.0,
+    device="cpu",
+    fade_func=_fade,
+    generator=None,
+):
+    # Ensure device is a torch.device object for noise tensor, not a string
+    target_device = torch.device(device if isinstance(device, str) else "cpu")
+    noise = torch.zeros(shape, device=target_device)
+    frequency = 1.0
+    amplitude = 1.0
+    for _ in range(octaves):
+        current_res_h = max(1, int(frequency * res[0]))
+        current_res_w = max(1, int(frequency * res[1]))
+        current_res = (current_res_h, current_res_w)
+        # rand_perlin_2d itself handles the device string internally for its sub-components
+        noise += amplitude * rand_perlin_2d(
+            shape,
+            current_res,
+            fade_func=fade_func,
+            device=device,  # Pass the original device string or torch.device here
+            generator=generator,
+        )
+        frequency *= frequency_factor
+        amplitude *= persistence
+    return noise
+
+
+# --- End Perlin Noise Generation Functions ---
 
 
 class ExecutableScriptNoise:
@@ -12,7 +121,7 @@ class ExecutableScriptNoise:
     """
 
     def __init__(
-        self, script_code, seed, model, device_string, script_globals_template
+        self, script_code, seed, model, device_string, script_globals_template, sigmas
     ):
         self.script_code = script_code
         self.seed = seed  # This is the seed the script should primarily use
@@ -21,6 +130,7 @@ class ExecutableScriptNoise:
             device_string  # Target device for tensor creation, e.g., "cuda:0"
         )
         self.script_globals_template = script_globals_template
+        self.sigmas = sigmas  # Store sigmas
 
     def generate_noise(self, latent_image_dict):
         """
@@ -40,12 +150,21 @@ class ExecutableScriptNoise:
             "seed": self.seed,
             "model": self.model,
             "device": self.device_string,  # Pass the device string for torch.device() in script
+            "sigmas": (
+                self.sigmas.to(torch.device(self.device_string))
+                if self.sigmas is not None
+                else None
+            ),  # Make sigmas available
             "output_noise_tensor": None,
         }
 
         current_script_globals = self.script_globals_template.copy()
         current_script_globals["torch"] = torch
         current_script_globals["math"] = math
+        current_script_globals["F"] = F  # Add torch.nn.functional
+        current_script_globals["rand_perlin_2d_octaves_fn"] = rand_perlin_2d_octaves
+        current_script_globals["rand_perlin_2d_fn"] = rand_perlin_2d
+        current_script_globals["_fade_fn"] = _fade
         # One could add more common modules here like 'numpy', 'random' if desired as globals.
         # current_script_globals['F'] = torch.nn.functional # Example
 
@@ -100,6 +219,9 @@ _DEFAULT_NOISE_SCRIPT = """# Script to generate custom noise for ComfyUI's WolfS
 #                 Use this with torch.device(device) when creating new tensors.
 # - torch (module): The PyTorch module.
 # - math (module): Python's standard math module.
+# - F (module): torch.nn.functional.
+# - sigmas (tensor): The sigma schedule (if SIGMAS input is connected to the node).
+# - rand_perlin_2d_octaves_fn, rand_perlin_2d_fn, _fade_fn: Perlin noise functions.
 #
 # The script MUST assign the final noise tensor to a variable named 'output_noise_tensor'.
 # This tensor should:
@@ -108,33 +230,21 @@ _DEFAULT_NOISE_SCRIPT = """# Script to generate custom noise for ComfyUI's WolfS
 #   3. Be on the torch device specified by the 'device' string.
 
 print(f"WolfScriptableNoise Script: Generating noise. Latent shape: {input_samples.shape}, Seed: {seed}, Device: {device}")
+if sigmas is not None:
+    print(f"  Sigmas available, first sigma: {sigmas[0].item() if len(sigmas) > 0 else 'empty'}")
+else:
+    print("  Sigmas not available to the script (SIGMAS input likely not connected).")
 
-# --- Example Implementations ---
+# Default: Gaussian noise, scaled by sigmas[0] if available, otherwise N(0,1)
+noise_gen = torch.Generator(device=torch.device(device)).manual_seed(seed)
+gaussian_noise = torch.randn(input_samples.shape, generator=noise_gen, dtype=input_samples.dtype, device=torch.device(device))
 
-# Example 1: Standard Gaussian Noise (like torch.randn)
-# This is often the default noise type used in diffusion models.
-# generator = torch.Generator(device=torch.device(device)).manual_seed(seed)
-# noise = torch.randn(input_samples.shape, 
-#                     generator=generator, 
-#                     dtype=input_samples.dtype, 
-#                     layout=input_samples.layout, 
-#                     device=torch.device(device))
-
-# Example 2: Zero Noise (results in no noise being added by this source)
-noise = torch.zeros_like(input_samples, device=torch.device(device))
-
-# Example 3: Uniform Noise
-# Creates noise where each value is uniformly random between -1 and 1.
-# generator = torch.Generator(device=torch.device(device)).manual_seed(seed)
-# noise = (torch.rand(input_samples.shape, 
-#                    generator=generator, 
-#                    dtype=input_samples.dtype, 
-#                    layout=input_samples.layout, 
-#                    device=torch.device(device)) * 2.0) - 1.0
-
-# --- Assign your chosen noise to output_noise_tensor ---
-output_noise_tensor = noise
-# print(f"WolfScriptableNoise Script: Generated noise tensor with shape {output_noise_tensor.shape}, mean {output_noise_tensor.mean():.4f}, std {output_noise_tensor.std():.4f}")
+if sigmas is not None and len(sigmas) > 0:
+    output_noise_tensor = gaussian_noise * sigmas[0].item()
+    print(f"  Scaled Gaussian noise by sigmas[0]: {sigmas[0].item():.4f}")
+else:
+    output_noise_tensor = gaussian_noise
+    print("  Using unscaled N(0,1) Gaussian noise.")
 """
 
 
@@ -162,6 +272,10 @@ class WolfScriptableNoise:
                         "control_after_generate": True,
                         "tooltip": "Seed for the noise generation script.",
                     },
+                ),
+                "sigmas": (
+                    "SIGMAS",
+                    {"tooltip": "Sigma schedule for noise scaling and context."},
                 ),
                 "device_selection": (
                     ["AUTO", "CPU", "GPU"],
@@ -194,7 +308,9 @@ class WolfScriptableNoise:
     FUNCTION = "create_noise_generator"
     CATEGORY = "sampling/custom_sampling/noise"  # Consistent with ComfyUI's RandomNoise, DisableNoise
 
-    def create_noise_generator(self, seed, device_selection, script, model=None):
+    def create_noise_generator(
+        self, seed, sigmas, device_selection, script, model=None
+    ):
 
         target_device_str = ""
         if device_selection == "CPU":
@@ -242,11 +358,13 @@ class WolfScriptableNoise:
         print(
             f"{self.__class__.__name__}: Noise generator configured for device: '{target_device_str}', seed: {seed}"
         )
+        if sigmas is not None:
+            print(
+                f"  Sigmas provided to node, first sigma: {sigmas[0].item() if len(sigmas) > 0 else 'empty'}"
+            )
 
         script_globals_template = {
             "__builtins__": __builtins__,
-            # Specific modules like torch, math are added directly into the execution scope
-            # within ExecutableScriptNoise.generate_noise for robustness.
         }
 
         try:
@@ -259,9 +377,12 @@ class WolfScriptableNoise:
             traceback.print_exc()
 
             class ErrorNoiseGenerator:
-                def __init__(self, error_msg_prop, node_seed):
+                def __init__(self, error_msg_prop, node_seed, node_sigmas):
                     self.error_message = error_msg_prop
-                    self.seed = node_seed  # Store the original seed for API consistency
+                    self.seed = node_seed
+                    self.sigmas = (
+                        node_sigmas  # Store for completeness, though script failed
+                    )
 
                 def generate_noise(self, latent_image_dict):
                     print(
@@ -273,7 +394,7 @@ class WolfScriptableNoise:
                         latent_image_dict["samples"], device=target_dev
                     )
 
-            return (ErrorNoiseGenerator(error_message, seed),)
+            return (ErrorNoiseGenerator(error_message, seed, sigmas),)
 
         noise_generator_object = ExecutableScriptNoise(
             script_code=script,
@@ -281,6 +402,7 @@ class WolfScriptableNoise:
             model=model,
             device_string=target_device_str,
             script_globals_template=script_globals_template,
+            sigmas=sigmas,  # Pass sigmas here
         )
         return (noise_generator_object,)
 

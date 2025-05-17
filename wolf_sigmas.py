@@ -22,6 +22,14 @@ from .nodes.wolf_simple_sampler_script_evaluator import WolfSimpleSamplerScriptE
 from .nodes.wolf_scriptable_empty_latent import WolfScriptableEmptyLatent
 from .nodes.wolf_simple_scriptable_empty_latent import WolfSimpleScriptableEmptyLatent
 from .nodes.wolf_scriptable_noise import WolfScriptableNoise
+from .nodes.wolf_scriptable_latent_analyzer import WolfScriptableLatentAnalyzer
+from .nodes.modify_activations_svd import ModifyActivationsSVD
+from .nodes.latent_visualize import LatentVisualizeDirect
+from .nodes.wolf_probe import WolfProbeNode, WolfProbeGetDataNode
+from .nodes.list_model_blocks import ListModelBlocks
+from .nodes.get_image_size import GetImageSize
+from .nodes.image_compare_node import ComfyUIImageCompare
+from .nodes.visualize_activations import VisualizeActivation
 
 NODE_CLASS_MAPPINGS = {
     "WolfSigmasGet": WolfSigmasGet,
@@ -48,6 +56,15 @@ NODE_CLASS_MAPPINGS = {
     "WolfScriptableEmptyLatent": WolfScriptableEmptyLatent,
     "WolfSimpleScriptableEmptyLatent": WolfSimpleScriptableEmptyLatent,
     "WolfScriptableNoise": WolfScriptableNoise,
+    "WolfScriptableLatentAnalyzer": WolfScriptableLatentAnalyzer,
+    "ModifyActivationsSVD": ModifyActivationsSVD,
+    "LatentVisualizeDirect": LatentVisualizeDirect,
+    "WolfProbeSetup": WolfProbeNode,
+    "WolfProbeGetData": WolfProbeGetDataNode,
+    "ListModelBlocks": ListModelBlocks,
+    "GetImageSize": GetImageSize,
+    "ComfyUIImageCompare": ComfyUIImageCompare,
+    "VisualizeActivation": VisualizeActivation,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -75,4 +92,16 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "WolfScriptableEmptyLatent": "Scriptable Empty Latent (🐺)",
     "WolfSimpleScriptableEmptyLatent": "Simple Scriptable Empty Latent (🐺)",
     "WolfScriptableNoise": "Scriptable Noise (🐺)",
+    "WolfScriptableLatentAnalyzer": "Wolf Scriptable Latent Analyzer (🐺)",
+    "ModifyActivationsSVD": "Modify Activations (SVD)",
+    "LatentVisualizeDirect": "Latent Visualize (Direct)",
+    "WolfProbeSetup": "Wolf Probe Setup (Debug V2)",
+    "WolfProbeGetData": "Wolf Probe Get Data (Debug V2)",
+    "ListModelBlocks": "List Model Blocks",
+    "GetImageSize": "Get Image Size",
+    "ComfyUIImageCompare": "Image Compare (🐺)",
+    "VisualizeActivation": "Visualize Activation (🐺)",
 }
+
+WEB_DIRECTORY = "./web"
+__all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS", "WEB_DIRECTORY"]
