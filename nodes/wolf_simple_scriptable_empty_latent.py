@@ -48,6 +48,17 @@ output_latent_samples = torch.zeros(shape, dtype=torch.float32, device=torch.dev
 
 
 class WolfSimpleScriptableEmptyLatent:
+    """
+    Generates an initial latent tensor using a user-provided Python script.
+    This node offers a simpler approach for custom latent generation,
+    automatically handling aspects like model-aware channel adjustments (e.g., for FLUX).
+
+    The script defines the latent generation logic. See the ComfyUI_WolfSigmas
+    README.md for detailed scripting information, available variables, and examples.
+
+    ⚠️ Security Warning: Executes arbitrary Python code. Only use trusted scripts.
+    """
+
     def __init__(self):
         self.node_device = (
             comfy.model_management.intermediate_device()

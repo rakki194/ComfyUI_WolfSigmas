@@ -36,6 +36,12 @@ This custom node pack for ComfyUI provides a suite of tools for generating and m
       - [Outputs](#outputs)
       - [Scripting Environment](#scripting-environment)
       - [Default Script: Calibrated Structured Noise Mathematics](#default-script-calibrated-structured-noise-mathematics)
+    - [Simple Scriptable Empty Latent (🐺)](#simple-scriptable-empty-latent-)
+      - [⚠️ Security Warning](#️-security-warning-1)
+      - [Simple Inputs](#simple-inputs)
+      - [Simple Outputs](#simple-outputs)
+      - [Simple Scripting Environment](#simple-scripting-environment)
+      - [Default Script: Model-Aware Zero Latent](#default-script-model-aware-zero-latent)
   - [General Sigma Utilities](#general-sigma-utilities)
     - [Get Sigmas (🐺)](#get-sigmas-)
     - [Set Sigmas from JSON (🐺)](#set-sigmas-from-json-)
@@ -221,7 +227,7 @@ The `WolfSimpleScriptableEmptyLatent` node provides a straightforward way to gen
 
 This node executes arbitrary Python code. **Only use scripts from trusted sources.** Review any script before execution if you are unsure of its origin.
 
-#### Inputs
+#### Simple Inputs
 
 - `width`: `INT` (default: 1024, min: 64, step: 8) - Target width of the image (latent width will be `width // 8`).
 - `height`: `INT` (default: 1024, min: 64, step: 8) - Target height of the image (latent height will be `height // 8`).
@@ -230,11 +236,11 @@ This node executes arbitrary Python code. **Only use scripts from trusted source
 - `script`: `STRING` (multiline, default: Python script for model-aware zero latent) - The Python script to execute for latent generation.
 - `model`: `MODEL` (optional) - An optional model input. The default script uses this to determine if the model is FLUX-based to set the latent channel count to 16 (otherwise 4).
 
-#### Outputs
+#### Simple Outputs
 
 - `LATENT`: `LATENT` - A dictionary containing the generated latent tensor under the key `"samples"`.
 
-#### Scripting Environment
+#### Simple Scripting Environment
 
 The Python script executed by this node has access to the following:
 
