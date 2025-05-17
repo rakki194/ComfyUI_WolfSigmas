@@ -28,7 +28,6 @@ from .nodes.latent_visualize import LatentVisualizeDirect
 from .nodes.wolf_probe import WolfProbeNode, WolfProbeGetDataNode
 from .nodes.list_model_blocks import ListModelBlocks
 from .nodes.get_image_size import GetImageSize
-from .nodes.image_compare_node import ComfyUIImageCompare
 from .nodes.visualize_activations import VisualizeActivation
 
 NODE_CLASS_MAPPINGS = {
@@ -63,7 +62,6 @@ NODE_CLASS_MAPPINGS = {
     "WolfProbeGetData": WolfProbeGetDataNode,
     "ListModelBlocks": ListModelBlocks,
     "GetImageSize": GetImageSize,
-    "ComfyUIImageCompare": ComfyUIImageCompare,
     "VisualizeActivation": VisualizeActivation,
 }
 
@@ -99,7 +97,6 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "WolfProbeGetData": "Wolf Probe Get Data (Debug V2)",
     "ListModelBlocks": "List Model Blocks",
     "GetImageSize": "Get Image Size",
-    "ComfyUIImageCompare": "Image Compare (🐺)",
     "VisualizeActivation": "Visualize Activation (🐺)",
 }
 
