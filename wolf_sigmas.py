@@ -76,17 +76,3 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "WolfSimpleScriptableEmptyLatent": "Simple Scriptable Empty Latent (🐺)",
     "WolfScriptableNoise": "Scriptable Noise (🐺)",
 }
-
-# --- Add logging here ---
-print("\n--- ComfyUI_WolfSigmas Registration --- (from wolf_sigmas.py)")
-print("Attempting to register the following NODE_CLASS_MAPPINGS:")
-for class_key, class_obj in NODE_CLASS_MAPPINGS.items():
-    print(
-        f"  Class: '{class_key}' -> {class_obj.__name__ if hasattr(class_obj, '__name__') else type(class_obj)}"
-    )
-
-print("\nAttempting to register the following NODE_DISPLAY_NAME_MAPPINGS:")
-for display_key, display_name in NODE_DISPLAY_NAME_MAPPINGS.items():
-    print(f"  Display: '{display_key}' -> '{display_name}'")
-print("--- End ComfyUI_WolfSigmas Registration ---\n")
-# --- End logging ---

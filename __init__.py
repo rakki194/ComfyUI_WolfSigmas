@@ -21,6 +21,7 @@ from .nodes.wolf_sampler_script_evaluator import WolfSamplerScriptEvaluator
 from .nodes.wolf_simple_sampler_script_evaluator import WolfSimpleSamplerScriptEvaluator
 from .nodes.wolf_scriptable_empty_latent import WolfScriptableEmptyLatent
 from .nodes.wolf_simple_scriptable_empty_latent import WolfSimpleScriptableEmptyLatent
+from .nodes.wolf_scriptable_noise import WolfScriptableNoise
 
 NODE_CLASS_MAPPINGS = {
     "WolfSigmasGet": WolfSigmasGet,
@@ -46,6 +47,7 @@ NODE_CLASS_MAPPINGS = {
     "WolfSimpleSamplerScriptEvaluator": WolfSimpleSamplerScriptEvaluator,
     "WolfScriptableEmptyLatent": WolfScriptableEmptyLatent,
     "WolfSimpleScriptableEmptyLatent": WolfSimpleScriptableEmptyLatent,
+    "WolfScriptableNoise": WolfScriptableNoise,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -72,6 +74,5 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "WolfSimpleSamplerScriptEvaluator": "Wolf Simple Sampler Script (🐺)",
     "WolfScriptableEmptyLatent": "Scriptable Empty Latent (Perlin) (🐺)",
     "WolfSimpleScriptableEmptyLatent": "Simple Scriptable Empty Latent (🐺)",
+    "WolfScriptableNoise": "Scriptable Noise (🐺)",
 }
-
-__all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS"]
