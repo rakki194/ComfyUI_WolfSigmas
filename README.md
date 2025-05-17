@@ -37,7 +37,7 @@ This custom node pack for ComfyUI provides a suite of tools for generating and m
       - [Scripting Environment](#scripting-environment)
       - [Default Script: Calibrated Structured Noise Mathematics](#default-script-calibrated-structured-noise-mathematics)
     - [Simple Scriptable Empty Latent (🐺)](#simple-scriptable-empty-latent-)
-      - [⚠️ Security Warning](#️-security-warning-1)
+      - [⚠️ Simple Security Warning](#️-simple-security-warning)
       - [Simple Inputs](#simple-inputs)
       - [Simple Outputs](#simple-outputs)
       - [Simple Scripting Environment](#simple-scripting-environment)
@@ -172,7 +172,7 @@ The default script generates initial noise by blending Perlin noise with Gaussia
     - Generated independently for each batch item and channel, using `rand_perlin_2d_octaves_fn`.
     - **Base Perlin Noise (`rand_perlin_2d_fn`):**
         - A grid of random 2D gradient vectors is created. For a point $(x,y)$ in the latent space, its position within a grid cell $(u,v)$ (where $u,v \in [0,1]$) is determined.
-        - Dot products are computed between the gradient vectors at the cell\'s four corners ($g_{00}, g_{10}, g_{01}, g_{11}$) and the displacement vectors from the point to these corners.
+        - Dot products are computed between the gradient vectors at the cell's four corners ($g_{00}, g_{10}, g_{01}, g_{11}$) and the displacement vectors from the point to these corners.
             - $dp_{00} = g_{00} \cdot (u, v)$
             - $dp_{10} = g_{10} \cdot (u-1, v)$
             - $dp_{01} = g_{01} \cdot (u, v-1)$
@@ -223,7 +223,7 @@ The `WolfSimpleScriptableEmptyLatent` node provides a straightforward way to gen
 - **Category:** `latent/noise`
 - **Description:** Executes a user-provided Python script to generate an initial latent tensor. The script has access to parameters like dimensions and an optional model connection. It must produce a latent tensor of the correct NCHW shape.
 
-#### ⚠️ Security Warning
+#### ⚠️ Simple Security Warning
 
 This node executes arbitrary Python code. **Only use scripts from trusted sources.** Review any script before execution if you are unsure of its origin.
 
