@@ -19,6 +19,8 @@ from .nodes.wolf_sigma_reverse_and_rescale import WolfSigmaReverseAndRescale
 from .nodes.wolf_sigma_script_evaluator import WolfSigmaScriptEvaluator
 from .nodes.wolf_sampler_script_evaluator import WolfSamplerScriptEvaluator
 from .nodes.wolf_simple_sampler_script_evaluator import WolfSimpleSamplerScriptEvaluator
+from .nodes.wolf_scriptable_empty_latent import WolfScriptableEmptyLatent
+from .nodes.wolf_simple_scriptable_empty_latent import WolfSimpleScriptableEmptyLatent
 
 
 NODE_CLASS_MAPPINGS = {
@@ -43,6 +45,8 @@ NODE_CLASS_MAPPINGS = {
     "WolfSigmaScriptEvaluator": WolfSigmaScriptEvaluator,
     "WolfSamplerScriptEvaluator": WolfSamplerScriptEvaluator,
     "WolfSimpleSamplerScriptEvaluator": WolfSimpleSamplerScriptEvaluator,
+    "WolfScriptableEmptyLatent": WolfScriptableEmptyLatent,
+    "WolfSimpleScriptableEmptyLatent": WolfSimpleScriptableEmptyLatent,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -67,4 +71,6 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "WolfSigmaScriptEvaluator": "Wolf Sigma Script Evaluator (🐺)",
     "WolfSamplerScriptEvaluator": "Wolf Sampler Script Evaluator (🐺)",
     "WolfSimpleSamplerScriptEvaluator": "Wolf Simple Sampler Script (🐺)",
+    "WolfScriptableEmptyLatent": "Scriptable Empty Latent (🐺)",
+    "WolfSimpleScriptableEmptyLatent": "Simple Scriptable Empty Latent (🐺)",
 }

@@ -7,6 +7,8 @@
 - **`Wolf Sigma Script Evaluator (🐺)`**
 - **`Wolf Sampler Script Evaluator (🐺)`**
 - **`Wolf Simple Sampler Script (🐺)`**
+- **`Scriptable Empty Latent (🐺)`**
+- **`Wolf Simple Sampler Script (🐺)`**
 
 **Executing scripts from untrusted sources can lead to security vulnerabilities, including remote code execution on your machine.**
 
@@ -28,6 +30,12 @@ This custom node pack for ComfyUI provides a suite of tools for generating and m
     - [Scriptable Sigma Generator](#scriptable-sigma-generator)
     - [Scriptable Sampler Generator](#scriptable-sampler-generator)
     - [Simple Scriptable Sampler](#simple-scriptable-sampler)
+    - [Scriptable Empty Latent (🐺)](#scriptable-empty-latent-)
+      - [⚠️ Security Warning](#️-security-warning)
+      - [Inputs](#inputs)
+      - [Outputs](#outputs)
+      - [Scripting Environment](#scripting-environment)
+      - [Default Script: Calibrated Structured Noise Mathematics](#default-script-calibrated-structured-noise-mathematics)
   - [General Sigma Utilities](#general-sigma-utilities)
     - [Get Sigmas (🐺)](#get-sigmas-)
     - [Set Sigmas from JSON (🐺)](#set-sigmas-from-json-)
@@ -80,6 +88,190 @@ The `Wolf Simple Sampler Script (🐺)` node offers a streamlined way to define 
   - `SAMPLER`: `SAMPLER` - A ComfyUI compatible sampler object that can be directly used with KSampler nodes.
 
 For detailed information on the scripting environment, available variables, requirements, and example scripts, please refer to the [Wolf Simple Sampler Script Evaluator Documentation](./SIMPLE_SAMPLER_EVALUATOR.md).
+
+### Scriptable Empty Latent (🐺)
+
+The `WolfScriptableEmptyLatent` node provides a highly flexible way to generate initial latent noise for the diffusion process. It allows users to define the generation logic using a Python script, enabling complex noise patterns, structured noise, or any custom initialization beyond simple Gaussian noise or zeros. The default script implements a sophisticated "Calibrated Structured Noise" combining Perlin and Gaussian noise, scaled by the initial sigma of a provided schedule and the VAE's scaling factor.
+
+- **Class:** `WolfScriptableEmptyLatent`
+- **Display Name:** `Scriptable Empty Latent (🐺)`
+- **Category:** `latent/noise` (or your preferred category like `Wolf Custom Nodes/Latent`)
+- **Description:** Executes a user-provided Python script to generate an initial latent tensor. The script has access to various parameters like dimensions, seed, the VAE model, a sigma schedule, and Perlin noise configuration. It must produce a latent tensor of the correct NCHW shape.
+
+#### ⚠️ Security Warning
+
+This node executes arbitrary Python code. **Only use scripts from trusted sources.** Review any script before execution if you are unsure of its origin.
+
+#### Inputs
+
+- `model`: `MODEL` - The main diffusion model, used primarily to access VAE properties like `latent_format.scale_factor`.
+- `width`: `INT` (default: 1024, min: 64, step: 8) - Target width of the image (latent width will be `width // 8`).
+- `height`: `INT` (default: 1024, min: 64, step: 8) - Target height of the image (latent height will be `height // 8`).
+- `batch_size`: `INT` (default: 1, min: 1, max: 64) - Number of latent images to generate in the batch.
+- `seed`: `INT` (default: 0, `control_after_generate`: True) - Seed for random number generation within the script.
+- `sigmas`: `SIGMAS` - An input sigma schedule (tensor). The default script uses the first sigma (`sigmas[0]`) for calibration.
+- `perlin_blend_factor`: `FLOAT` (default: 0.5, min: 0.0, max: 1.0) - Blend factor between Gaussian and Perlin noise in the default script. 0.0 for pure Gaussian, 1.0 for pure Perlin.
+- `perlin_res_factor_h`: `INT` (default: 8, min: 1, max: 128) - Resolution factor for Perlin noise height. Higher values mean lower frequency / larger features. Latent height is divided by this.
+- `perlin_res_factor_w`: `INT` (default: 8, min: 1, max: 128) - Resolution factor for Perlin noise width.
+- `perlin_frequency_factor`: `FLOAT` (default: 2.0, min: 1.01, max: 4.0) - Frequency multiplier for each Perlin octave.
+- `perlin_octaves`: `INT` (default: 4, min: 1, max: 10) - Number of Perlin noise octaves to sum.
+- `perlin_persistence`: `FLOAT` (default: 0.5, min: 0.01, max: 1.0) - Amplitude persistence factor between Perlin octaves.
+- `perlin_contrast_scale`: `FLOAT` (default: 1.0, min: 0.1, max: 20.0, step: 0.1, tooltip: "Scales Perlin noise before normalization to enhance its features.") - Multiplies the raw Perlin noise before it's normalized, to amplify its structural features.
+- `script`: `STRING` (multiline, default: Python script for calibrated structured noise) - The Python script to execute for latent generation.
+
+#### Outputs
+
+- `LATENT`: `LATENT` - A dictionary containing the generated latent tensor under the key `"samples"`.
+
+#### Scripting Environment
+
+The Python script executed by this node has access to the following:
+
+**Local Variables:**
+
+- `width`, `height`, `batch_size`, `seed`: Integers as provided to the node.
+- `sigmas`: A `torch.Tensor` of sigma values, moved to the execution `device`.
+- `model`: The `MODEL` object passed to the node.
+- `device`: A string representing the torch device for execution (e.g., `"cuda:0"`, `"cpu"`).
+- `perlin_params`: A dictionary containing all `perlin_*` input values:
+  `{'blend_factor', 'res_factor_h', 'res_factor_w', 'frequency_factor', 'octaves', 'persistence', 'perlin_contrast_scale'}`.
+- `output_latent_samples`: Initially `None`. The script **must** assign the final generated latent tensor (NCHW float32 tensor on `device`) to this variable.
+
+**Global Helper Modules & Functions:**
+
+- `torch`: The PyTorch module.
+- `math`: The Python math module.
+- `F`: `torch.nn.functional`.
+- `rand_perlin_2d_octaves_fn(shape, res, octaves, persistence, frequency_factor, device)`: Function to generate multi-octave 2D Perlin noise. `device` argument should be the string from `script_locals`.
+- `rand_perlin_2d_fn(shape, res, fade_func, device)`: Function to generate single-octave 2D Perlin noise.
+- `_fade_fn(t)`: The quintic fade function $6t^5 - 15t^4 + 10t^3$ used in Perlin noise.
+
+#### Default Script: Calibrated Structured Noise Mathematics
+
+The default script generates initial noise by blending Perlin noise with Gaussian noise and then calibrates its magnitude using the provided `sigmas` and VAE properties.
+
+1. **Parameter Setup:**
+    - Latent dimensions: $H_L = \text{height} // 8$, $W_L = \text{width} // 8$. (Note: For FLUX models, the script uses $H_L = \text{height} // 8, W_L = \text{width} // 8$ as well, but with 16 channels).
+    - Target sigma $\sigma_{target}$ is taken as the first value from the input `sigmas` tensor.
+    - VAE scaling factor $s_{VAE}$ is determined based on the model type (e.g., 0.18215 for typical SDXL, 1.0 for FLUX). This value is logged for informational purposes.
+    - The **effective sigma** for scaling the final $\mathcal{N}(0, 1)$ noise is:
+        $$ \sigma_{eff} = \sigma_{target} $$
+    This means the standard deviation of the final output noise tensor is intended to match the `target_sigma` from the input schedule.
+
+2. **Gaussian Noise Generation ($G$):**
+    - Standard Gaussian noise is generated for each element in the latent tensor $(B, C, H_L, W_L)$, where $B$ is batch size and $C=4$ channels.
+    - $G_{b,c,h,w} \sim \mathcal{N}(0, 1)$
+
+3. **Perlin Noise Generation ($P$):**
+    - Generated independently for each batch item and channel, using `rand_perlin_2d_octaves_fn`.
+    - **Base Perlin Noise (`rand_perlin_2d_fn`):**
+        - A grid of random 2D gradient vectors is created. For a point $(x,y)$ in the latent space, its position within a grid cell $(u,v)$ (where $u,v \in [0,1]$) is determined.
+        - Dot products are computed between the gradient vectors at the cell\'s four corners ($g_{00}, g_{10}, g_{01}, g_{11}$) and the displacement vectors from the point to these corners.
+            - $dp_{00} = g_{00} \cdot (u, v)$
+            - $dp_{10} = g_{10} \cdot (u-1, v)$
+            - $dp_{01} = g_{01} \cdot (u, v-1)$
+            - $dp_{11} = g_{11} \cdot (u-1, v-1)$
+        - These dot products are interpolated using a **fade function** $\text{fade}(t) = 6t^5 - 15t^4 + 10t^3$ to ensure smooth transitions. Let $t_u = \text{fade}(u)$ and $t_v = \text{fade}(v)$.
+        - Lerp (Linear Interpolation): $\text{lerp}(a, b, w) = a + w(b-a)$.
+            - $v_0 = \text{lerp}(dp_{00}, dp_{10}, t_u)$
+            - $v_1 = \text{lerp}(dp_{01}, dp_{11}, t_u)$
+        - The final Perlin value for that point is $\text{lerp}(v_0, v_1, t_v)$, typically scaled by $\sqrt{2}$.
+    - **Octaves:** Multiple layers (octaves) of Perlin noise are summed. For each octave $i$:
+        - Frequency $f_i = \text{frequency\_factor}^i$. The resolution `res` for `rand_perlin_2d_fn` is scaled by $f_i$.
+        - Amplitude $A_i = \text{persistence}^i$.
+        - The total Perlin noise is $P_{raw} = \sum_{i=0}^{\text{octaves}-1} A_i \times \text{Perlin}_i(\text{shape}, \text{res} \times f_i)$.
+    - The base resolution for Perlin noise is determined by `perlin_res_factor_h` and `perlin_res_factor_w`:
+        - $\text{res}_h = \max(1, H_L // \text{perlin\_res\_factor\_h})$
+        - $\text{res}_w = \max(1, W_L // \text{perlin\_res\_factor\_w})$
+
+4. **Perlin Contrast Scaling:**
+    - Let $c_{scale}$ be the `perlin_contrast_scale` input parameter.
+    - The raw Perlin noise $P_{raw}$ (generated in step 3) is multiplied by $c_{scale}$ to enhance its features before normalization:
+        $$ P_{scaled} = P_{raw} \times c_{scale} $$
+
+5. **Normalization:**
+    - Both the Gaussian noise $G$ and the contrast-scaled Perlin noise $P_{scaled}$ are independently normalized to have zero mean and unit standard deviation across their spatial dimensions (height and width) for each channel and batch item. For any noise tensor $X$ (here $X$ would be $G$ or $P_{scaled}$):
+        $$ X_{norm} = \frac{X - \mu_X}{\sigma_X + \epsilon} $$
+        where $\mu_X$ is the mean of $X$, $\sigma_X$ is its standard deviation, and $\epsilon$ is a small constant (e.g., $10^{-5}$) to prevent division by zero. So, we get $G_{norm}$ from $G$, and $P_{norm}$ from $P_{scaled}$.
+
+6. **Blending:**
+    - The normalized Gaussian noise $G_{norm}$ and normalized (contrast-enhanced) Perlin noise $P_{norm}$ are blended using the `perlin_blend_factor` ($\alpha_{blend}$):
+        $$ N_{blend} = (1 - \alpha_{blend}) \cdot G_{norm} + \alpha_{blend} \cdot P_{norm} $$
+        This is equivalent to `torch.lerp(G_norm, P_norm, perlin_blend_factor)`.
+
+7. **Re-Normalization of Blended Noise:**
+    - The blended noise $N_{blend}$ is normalized again to ensure it has zero mean and unit standard deviation:
+        $$ N_{blend, norm} = \frac{N_{blend} - \mu_{N_{blend}}}{\sigma_{N_{blend}} + \epsilon} $$
+
+8. **Final Scaling:**
+    - The re-normalized blended noise $N_{blend, norm}$ (which is $\mathcal{N}(0, 1)$) is scaled by the `effective_sigma` (which is $\sigma_{target}$) calculated in step 1:
+        $$ \text{Output Latent} = N_{blend, norm} \times \sigma_{eff} $$
+    This ensures the initial latent noise has a standard deviation equal to $\sigma_{target}$, which is typically expected by samplers using schedules like Karras.
+
+### Simple Scriptable Empty Latent (🐺)
+
+The `WolfSimpleScriptableEmptyLatent` node provides a straightforward way to generate initial latent noise using a Python script. It is simpler than the `Scriptable Empty Latent (🐺)` node and is well-suited for basic latent generation or when custom logic is needed for channel count or initial values, especially with models like FLUX. The default script generates a zero-filled latent tensor, automatically adjusting the number of channels based on the connected model.
+
+- **Class:** `WolfSimpleScriptableEmptyLatent`
+- **Display Name:** `Simple Scriptable Empty Latent (🐺)`
+- **Category:** `latent/noise`
+- **Description:** Executes a user-provided Python script to generate an initial latent tensor. The script has access to parameters like dimensions and an optional model connection. It must produce a latent tensor of the correct NCHW shape.
+
+#### ⚠️ Security Warning
+
+This node executes arbitrary Python code. **Only use scripts from trusted sources.** Review any script before execution if you are unsure of its origin.
+
+#### Inputs
+
+- `width`: `INT` (default: 1024, min: 64, step: 8) - Target width of the image (latent width will be `width // 8`).
+- `height`: `INT` (default: 1024, min: 64, step: 8) - Target height of the image (latent height will be `height // 8`).
+- `batch_size`: `INT` (default: 1, min: 1, max: 64) - Number of latent images to generate in the batch.
+- `device_selection`: `COMBO["AUTO", "CPU", "GPU"]` (default: "AUTO") - Specifies the target device for the script execution and the final latent tensor. "AUTO" attempts to use the model\'s device or falls back to an intermediate device.
+- `script`: `STRING` (multiline, default: Python script for model-aware zero latent) - The Python script to execute for latent generation.
+- `model`: `MODEL` (optional) - An optional model input. The default script uses this to determine if the model is FLUX-based to set the latent channel count to 16 (otherwise 4).
+
+#### Outputs
+
+- `LATENT`: `LATENT` - A dictionary containing the generated latent tensor under the key `"samples"`.
+
+#### Scripting Environment
+
+The Python script executed by this node has access to the following:
+
+**Local Variables:**
+
+- `width`, `height`, `batch_size`: Integers as provided to the node.
+- `model`: The `MODEL` object passed to the node (can be `None`).
+- `device`: A string representing the torch device for execution (e.g., `"cuda:0"`, `"cpu"`), determined by the `device_selection` input and available hardware/model.
+- `output_latent_samples`: Initially `None`. The script **must** assign the final generated latent tensor (NCHW float32 tensor on `device`) to this variable.
+
+**Global Helper Modules & Functions:**
+
+- `torch`: The PyTorch module.
+- `math`: The Python math module.
+
+#### Default Script: Model-Aware Zero Latent
+
+The default script generates a zero-filled latent tensor with dimensions appropriate for the specified `width`, `height`, and `batch_size`.
+
+1. **Channel Determination:**
+    - It inspects the connected `model` (if any).
+    - If the model is identified as a FLUX model (by checking `model.model_type` or class name), `num_latent_channels` is set to 16.
+    - Otherwise, `num_latent_channels` defaults to 4 (standard for SD, SDXL, etc.).
+    - If no model is connected, it defaults to 4 channels.
+    - Prints the detected model type and chosen channel count.
+
+2. **Latent Dimensions:**
+    - Latent height: $H_L = \text{height} // 8$.
+    - Latent width: $W_L = \text{width} // 8$.
+
+3. **Tensor Generation:**
+    - The target shape is $(B, C, H_L, W_L)$, where $B$ is `batch_size` and $C$ is the determined `num_latent_channels`.
+    - A `torch.zeros` tensor of this `shape` is created with `dtype=torch.float32` on the specified `device`.
+    - This tensor is assigned to `output_latent_samples`.
+    - Prints the generation parameters and target shape.
+
+This provides a basic, flexible starting point for latent generation, particularly useful for ensuring compatibility with models requiring different latent channel depths.
 
 ---
 
