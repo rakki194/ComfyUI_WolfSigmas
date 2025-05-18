@@ -24,6 +24,8 @@ from .nodes.wolf_scriptable_empty_latent import WolfScriptableEmptyLatent
 from .nodes.wolf_simple_scriptable_empty_latent import WolfSimpleScriptableEmptyLatent
 from .nodes.wolf_scriptable_noise import WolfScriptableNoise
 from .nodes.wolf_scriptable_latent_analyzer import WolfScriptableLatentAnalyzer
+from .nodes.dct_noise_scriptable_latent import WolfDCTNoiseScriptableLatent
+from .nodes.wolf_dct_noise import WolfDCTNoise
 from .nodes.modify_activations_svd import ModifyActivationsSVD
 from .nodes.latent_visualize import LatentVisualizeDirect
 from .nodes.wolf_probe import WolfProbeNode, WolfProbeGetDataNode
@@ -58,6 +60,8 @@ NODE_CLASS_MAPPINGS = {
     "WolfSimpleScriptableEmptyLatent": WolfSimpleScriptableEmptyLatent,
     "WolfScriptableNoise": WolfScriptableNoise,
     "WolfScriptableLatentAnalyzer": WolfScriptableLatentAnalyzer,
+    "WolfDCTNoiseScriptableLatent": WolfDCTNoiseScriptableLatent,
+    "WolfDCTNoise": WolfDCTNoise,
     "ModifyActivationsSVD": ModifyActivationsSVD,
     "LatentVisualizeDirect": LatentVisualizeDirect,
     "WolfProbeSetup": WolfProbeNode,
@@ -94,6 +98,8 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "WolfSimpleScriptableEmptyLatent": "Simple Scriptable Empty Latent (🐺)",
     "WolfScriptableNoise": "Scriptable Noise (🐺)",
     "WolfScriptableLatentAnalyzer": "Wolf Scriptable Latent Analyzer (🐺)",
+    "WolfDCTNoiseScriptableLatent": "DCT Noise Latent (Wolf)",
+    "WolfDCTNoise": "DCT Noise (Wolf)",
     "ModifyActivationsSVD": "Modify Activations (SVD)",
     "LatentVisualizeDirect": "Latent Visualize (Direct)",
     "WolfProbeSetup": "Wolf Probe Setup (Debug V2)",

@@ -63,6 +63,11 @@ This custom node pack for ComfyUI provides a suite of tools for generating and m
       - [Scripting Environment (`generate_noise` method execution)](#scripting-environment-generate_noise-method-execution)
       - [Default Script: Basic Gaussian Noise](#default-script-basic-gaussian-noise)
       - [Potential Use Cases](#potential-use-cases)
+    - [DCT Noise (Wolf) (🐺)](#dct-noise-wolf-)
+      - [DCT Noise Inputs](#dct-noise-inputs)
+      - [DCT Noise Outputs](#dct-noise-outputs)
+      - [How it Works](#how-it-works-1)
+      - [Potential Use Cases](#potential-use-cases-1)
     - [Scriptable Empty Latent (🐺)](#scriptable-empty-latent-)
       - [⚠️ Scriptable Security Warning](#️-scriptable-security-warning)
       - [Scriptable Empty Latent Inputs](#scriptable-empty-latent-inputs)
@@ -75,6 +80,10 @@ This custom node pack for ComfyUI provides a suite of tools for generating and m
       - [Simple Outputs](#simple-outputs)
       - [Simple Scripting Environment](#simple-scripting-environment)
       - [Default Script: Model-Aware Zero Latent](#default-script-model-aware-zero-latent)
+    - [DCT Noise Latent (Wolf) (🐺)](#dct-noise-latent-wolf-)
+      - [DCT Noise Latent Inputs](#dct-noise-latent-inputs)
+      - [DCT Noise Latent Outputs](#dct-noise-latent-outputs)
+      - [How it Works](#how-it-works-2)
   - [General Sigma Utilities](#general-sigma-utilities)
     - [Get Sigmas (🐺)](#get-sigmas-)
     - [Set Sigmas from JSON (🐺)](#set-sigmas-from-json-)
@@ -558,6 +567,50 @@ This script generates standard Gaussian noise $\mathcal{N}(0, 1)$ matching the s
 - **Noise Debugging:** Insert print statements or calculations within the noise generation script to check its statistical properties (e.g., mean, std) before it's used by the sampler.
 - **Conditional Noise:** Generate different types of noise based on inputs like `sigmas`, `model` properties, or even `batch_index`.
 
+### DCT Noise (Wolf) (🐺)
+
+- **Class:** `WolfDCTNoise`
+- **Display Name:** `DCT Noise (Wolf)`
+- **Category:** `sampling/custom_sampling/noise`
+- **Description:** Returns a custom `NOISE` object that, when invoked by a sampler, generates DCT (Discrete Cosine Transform)-based noise. This noise is characterized by JPEG-like compression artifacts and can be controlled by various parameters. The generated noise is automatically scaled by the current sigma value (typically `sigmas[0]`) provided by the sampler.
+
+#### DCT Noise Inputs
+
+- **Required:**
+  - `seed`: `INT` (default: 0, `control_after_generate`: True) - Seed for the random number generator used in DCT noise creation.
+  - `sigmas`: `SIGMAS` - The sigma schedule. The first sigma (`sigmas[0]`) from this schedule (or the one passed by the sampler) is typically used to scale the generated noise.
+  - `device_selection`: `COMBO["AUTO", "CPU", "GPU"]` (default: "AUTO") - Target device for the noise tensor. "AUTO" attempts to use the model's device or GPU.
+  - `dc_map_base_min`: `FLOAT` (default: -800.0) - Minimum value for the initial DC coefficient map.
+  - `dc_map_base_max`: `FLOAT` (default: 800.0) - Maximum value for the initial DC coefficient map.
+  - `dc_map_smooth_sigma`: `FLOAT` (default: 2.0) - Sigma for Gaussian smoothing of the DC coefficient map.
+  - `ac_coeff_laplacian_scale`: `FLOAT` (default: 30.0) - Scale for the Laplacian distribution of pre-quantized AC coefficients.
+  - `q_table_multiplier`: `FLOAT` (default: 1.0) - Multiplier for the default JPEG quantization table.
+  - `normalization`: `COMBO["None", "Mean0Std1_channel", "Mean0Std1_tensor", "ScaleToStd1_channel", "ScaleToStd1_tensor"]` (default: "Mean0Std1_channel") - Normalization method for the raw DCT noise before scaling by sigma.
+- **Optional:**
+  - `model`: `MODEL` - Optional model context, can influence `AUTO` device selection.
+
+#### DCT Noise Outputs
+
+- `NOISE`: `NOISE` - A custom noise object compatible with ComfyUI samplers. This object's `generate_noise(latent_image_dict)` method produces the DCT noise.
+
+#### How it Works
+
+The `WolfDCTNoise` node creates an `ExecutableDCTNoise` object that stores the configuration. When a sampler requests noise (by calling `generate_noise(latent_image_dict)` on this object):
+
+1. The shape of the required noise is taken from `latent_image_dict["samples"]`.
+2. The target device is determined based on the node's `device_selection` and `model` input.
+3. DCT noise is generated for each channel and batch item using the same core logic as `WolfDCTNoiseScriptableLatent` (see its "How it Works" section for details on DC/AC coefficient generation, quantization, and IDCT). The parameters `dc_map_base_min/max`, `dc_map_smooth_sigma`, `ac_coeff_laplacian_scale`, and `q_table_multiplier` control this process.
+4. The raw generated noise (as a NumPy array) is converted to a PyTorch tensor.
+5. The specified `normalization` method is applied.
+6. The noise tensor is then scaled by the appropriate sigma value, typically `latent_image_dict['sigmas'][0]`. If `latent_image_dict['sigmas']` is not available, it falls back to `sigmas[0]` from the node's input.
+7. The final, scaled noise tensor is moved to the target device and returned to the sampler.
+
+#### Potential Use Cases
+
+- **Textured Initial Noise:** Introduce initial noise with JPEG-like artifacts for stylized image generation.
+- **Alternative to Gaussian Noise:** Experiment with different noise characteristics in the sampling process.
+- **Controllable Artifacts:** Fine-tune the appearance of compression-like patterns in the noise.
+
 ### Scriptable Empty Latent (🐺)
 
 The `WolfScriptableEmptyLatent` node provides a highly flexible way to generate initial latent noise for the diffusion process. It allows users to define the generation logic using a Python script, enabling complex noise patterns, structured noise, or any custom initialization beyond simple Gaussian noise or zeros. The default script implements a sophisticated "Calibrated Structured Noise" combining Perlin and Gaussian noise, scaled by the initial sigma of a provided schedule and the VAE's scaling factor.
@@ -741,6 +794,53 @@ The default script generates a zero-filled latent tensor with dimensions appropr
     - Prints the generation parameters and target shape.
 
 This provides a basic, flexible starting point for latent generation, particularly useful for ensuring compatibility with models requiring different latent channel depths.
+
+### DCT Noise Latent (Wolf) (🐺)
+
+- **Class:** `WolfDCTNoiseScriptableLatent`
+- **Display Name:** `DCT Noise Latent (Wolf)`
+- **Category:** `latent/noise`
+- **Description:** Generates an initial latent tensor using DCT (Discrete Cosine Transform)-based noise synthesis. This method aims to produce noise with characteristics similar to JPEG compression artifacts. The properties of the generated noise, such as the strength and smoothness of block-like patterns, can be controlled through various input parameters. This node is useful for initializing the diffusion process with a specific kind of textured noise rather than standard Gaussian noise or zeros.
+
+#### DCT Noise Latent Inputs
+
+- **Required:**
+  - `width`: `INT` (default: 1024, min: 64, max: MAX_RESOLUTION, step: 8) - Target width of the image (latent width will be `width // 8`).
+  - `height`: `INT` (default: 1024, min: 64, max: MAX_RESOLUTION, step: 8) - Target height of the image (latent height will be `height // 8`).
+  - `batch_size`: `INT` (default: 1, min: 1, max: 64) - Number of latent images to generate in the batch.
+  - `device_selection`: `COMBO["AUTO", "CPU", "GPU"]` (default: "AUTO") - Specifies the target device for the latent tensor.
+  - `seed`: `INT` (default: 0) - Seed for the random number generator used in noise creation.
+  - `dc_map_base_min`: `FLOAT` (default: -800.0) - Minimum value for the initial (pre-smoothing) DC coefficient map.
+  - `dc_map_base_max`: `FLOAT` (default: 800.0) - Maximum value for the initial DC coefficient map.
+  - `dc_map_smooth_sigma`: `FLOAT` (default: 2.0) - Sigma for Gaussian smoothing of the DC coefficient map. Higher values create smoother transitions between DC blocks.
+  - `ac_coeff_laplacian_scale`: `FLOAT` (default: 30.0) - Scale parameter for the Laplacian distribution from which pre-quantized AC (Alternating Current) coefficients are drawn.
+  - `q_table_multiplier`: `FLOAT` (default: 1.0) - Multiplier for the default JPEG quantization table. Values > 1.0 increase quantization (stronger artifacts), < 1.0 decrease it.
+  - `normalization`: `COMBO["None", "Mean0Std1_channel", "Mean0Std1_tensor", "ScaleToStd1_channel", "ScaleToStd1_tensor"]` (default: "Mean0Std1_channel") - Method to normalize the generated raw DCT noise before outputting it as a latent.
+- **Optional:**
+  - `model`: `MODEL` - Optional model input. Used by `device_selection="AUTO"` and to determine the number of latent channels (e.g., 4 for SDXL, 16 for FLUX).
+
+#### DCT Noise Latent Outputs
+
+- `LATENT`: `LATENT` - A dictionary containing the generated DCT noise latent tensor under the key `"samples"`. The tensor will have the shape (batch_size, num_latent_channels, height // 8, width // 8).
+
+#### How it Works
+
+The `WolfDCTNoiseScriptableLatent` node directly generates a latent tensor using an internal implementation of DCT-based noise synthesis. Unlike the "Scriptable" latent nodes, it does not execute a user-provided Python script for this core generation.
+
+1. It determines the target device and number of latent channels (4 for standard models, 16 for FLUX, based on the optional `model` input).
+2. It initializes a NumPy random number generator with the provided `seed`.
+3. For each channel in each batch item:
+    a. An initial map of DC (Direct Current / average) coefficients for 8x8 blocks is created using random values within `dc_map_base_min` and `dc_map_base_max`.
+    b. This DC map is smoothed using a Gaussian filter with `dc_map_smooth_sigma` to create spatial correlation.
+    c. For each 8x8 block, AC (Alternating Current / detail) coefficients are generated from a Laplacian distribution scaled by `ac_coeff_laplacian_scale`.
+    d. Both DC and AC coefficients are quantized using a standard JPEG quantization table (scaled by `q_table_multiplier`) and then dequantized.
+    e. An Inverse DCT (`idctn`) is applied to each 8x8 block of coefficients to produce a spatial domain block.
+    f. These spatial blocks are assembled into a single channel of noise for the latent.
+4. The resulting NumPy array (B, C, H_latent, W_latent) is converted to a PyTorch tensor.
+5. The specified `normalization` method is applied to the tensor.
+6. The final tensor is moved to the target device and returned.
+
+This node allows for creating initial latents that inherently possess compression-like artifacts, which can influence the style and texture of the generated images.
 
 ---
 
