@@ -176,6 +176,10 @@ class WolfDCTNoiseScriptableLatent:
                 "batch_size": ("INT", {"default": 1, "min": 1, "max": 64}),
                 "device_selection": (["AUTO", "CPU", "GPU"], {"default": "AUTO"}),
                 "seed": ("INT", {"default": 0, "min": 0, "max": 0xFFFFFFFFFFFFFFFF}),
+                "sigmas": (
+                    "SIGMAS",
+                    {"tooltip": "Input sigmas. The first sigma is used for scaling."},
+                ),
                 "dc_map_base_min": (
                     "FLOAT",
                     {"default": -800.0, "min": -2000.0, "max": 2000.0, "step": 10.0},
@@ -223,6 +227,7 @@ class WolfDCTNoiseScriptableLatent:
         batch_size,
         device_selection,
         seed,
+        sigmas,
         dc_map_base_min,
         dc_map_base_max,
         dc_map_smooth_sigma,
@@ -231,6 +236,12 @@ class WolfDCTNoiseScriptableLatent:
         normalization,
         model=None,
     ):
+        if not isinstance(sigmas, torch.Tensor) or sigmas.numel() == 0:
+            raise ValueError(
+                "Sigmas input is required and cannot be empty for WolfDCTNoiseScriptableLatent."
+            )
+        target_sigma_val = sigmas[0].item()
+
         # Determine target device
         if device_selection == "CPU":
             final_tensor_device = torch.device("cpu")
@@ -248,7 +259,9 @@ class WolfDCTNoiseScriptableLatent:
             else:
                 final_tensor_device = self.node_device
 
-        print(f"{self.__class__.__name__}: Final tensor on {final_tensor_device}")
+        print(
+            f"{self.__class__.__name__}: Final tensor on {final_tensor_device}, Target sigma for scaling: {target_sigma_val:.4f}"
+        )
 
         # Determine latent dimensions and channels
         latent_h = height // 8
@@ -368,10 +381,13 @@ class WolfDCTNoiseScriptableLatent:
                         f"{self.__class__.__name__}: Warning: Tensor has 0 elements during global normalization."
                     )
 
+        # Scale by sigmas[0] to make it a directly usable initial latent
+        output_tensor *= target_sigma_val
+
         output_tensor = output_tensor.to(final_tensor_device)
 
         print(
-            f"{self.__class__.__name__}: Final DCT noise latent on device: {output_tensor.device}, shape: {output_tensor.shape}, dtype: {output_tensor.dtype}"
+            f"{self.__class__.__name__}: Final DCT noise latent on device: {output_tensor.device}, shape: {output_tensor.shape}, dtype: {output_tensor.dtype}, mean: {torch.mean(output_tensor).item():.4f}, std: {torch.std(output_tensor).item():.4f}"
         )
 
         # Sanity check shape (mostly for FLUX vs SDXL)
@@ -386,4 +402,6 @@ class WolfDCTNoiseScriptableLatent:
 
 NODE_CLASS_MAPPINGS = {"WolfDCTNoiseScriptableLatent": WolfDCTNoiseScriptableLatent}
 
-NODE_DISPLAY_NAME_MAPPINGS = {"WolfDCTNoiseScriptableLatent": "DCT Noise Latent (Wolf)"}
+NODE_DISPLAY_NAME_MAPPINGS = {
+    "WolfDCTNoiseScriptableLatent": "DCT Noise Latent (Scriptable) (Wolf)"
+}

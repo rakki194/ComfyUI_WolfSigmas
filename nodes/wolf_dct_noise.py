@@ -126,6 +126,7 @@ class ExecutableDCTNoise:
         ac_coeff_laplacian_scale,
         q_table_multiplier,
         normalization_mode,
+        gaussian_blend_factor,
         device_string,
         node_sigmas,
     ):
@@ -136,25 +137,22 @@ class ExecutableDCTNoise:
         self.ac_coeff_laplacian_scale = ac_coeff_laplacian_scale
         self.q_table_multiplier = q_table_multiplier
         self.normalization_mode = normalization_mode
+        self.gaussian_blend_factor = gaussian_blend_factor
         self.device = torch.device(device_string)  # Store as torch.device
         self.node_sigmas = node_sigmas  # Sigmas provided to the main node
 
     def generate_noise(self, latent_image_dict):
         input_samples = latent_image_dict["samples"]
-        # Sigmas from the sampler for the current step.
-        # Samplers usually provide the full schedule, and for initial noise, sigma[0] is used.
         sampler_sigmas = latent_image_dict.get("sigmas", self.node_sigmas)
-
         batch_size, num_latent_channels, latent_h, latent_w = input_samples.shape
 
+        # --- Raw DCT Noise Generation (on CPU) ---
         current_q_table = DEFAULT_Q_TABLE_NP * self.q_table_multiplier
         current_q_table[current_q_table < 1] = 1
-
-        rng = np.random.default_rng(self.seed)
+        rng_numpy = np.random.default_rng(self.seed)
 
         batch_latents_np = []
         for i in range(batch_size):
-            # rng_item = np.random.default_rng(self.seed + i) # for per-item deterministic if needed
             channel_latents_np = []
             for _ in range(num_latent_channels):
                 single_channel_noise_np = _generate_single_channel_dct_noise(
@@ -164,72 +162,113 @@ class ExecutableDCTNoise:
                     (self.dc_map_base_min, self.dc_map_base_max),
                     self.dc_map_smooth_sigma,
                     self.ac_coeff_laplacian_scale,
-                    rng,
+                    rng_numpy,
                 )
                 channel_latents_np.append(single_channel_noise_np)
-
             stacked_channels_np = np.stack(channel_latents_np, axis=0)
             batch_latents_np.append(stacked_channels_np)
 
-        noise_tensor_np = np.stack(batch_latents_np, axis=0)
-        output_noise_tensor = torch.from_numpy(noise_tensor_np).to(
-            dtype=input_samples.dtype
+        dct_raw_torch_cpu = torch.from_numpy(np.stack(batch_latents_np, axis=0)).to(
+            dtype=input_samples.dtype  # Ensure dtype matches early, remains on CPU
         )
 
-        # Normalization
+        # --- Raw Gaussian Noise Generation (N(0,1) on CPU) ---
+        # Use a CPU-based generator for consistent seed application before potential device moves
+        gaussian_rng_cpu = torch.Generator(device="cpu").manual_seed(self.seed)
+        gaussian_raw_torch_cpu = torch.randn(
+            dct_raw_torch_cpu.shape,  # Match shape of DCT component
+            generator=gaussian_rng_cpu,
+            dtype=input_samples.dtype,
+            device="cpu",
+        )
+
+        # --- Blend Raw Components (on CPU) ---
+        # torch.lerp(input, end, weight) -> input if weight=0, end if weight=1
+        # input = dct_raw_torch_cpu, end = gaussian_raw_torch_cpu
+        blended_raw_torch_cpu = torch.lerp(
+            dct_raw_torch_cpu, gaussian_raw_torch_cpu, self.gaussian_blend_factor
+        )
+
+        # --- Apply Normalization to the Blended Noise (on CPU) ---
+        # The normalization functions will operate on blended_raw_torch_cpu
+        # and the result will be assigned to processed_noise_cpu
+        processed_noise_cpu = blended_raw_torch_cpu  # Start with the blended raw noise
+
         if self.normalization_mode != "None":
-            if output_noise_tensor.numel() == 0:
-                print(
-                    f"{self.__class__.__name__}: Skipping normalization for empty tensor."
-                )
-            elif self.normalization_mode == "Mean0Std1_channel":
-                for c in range(output_noise_tensor.shape[1]):
-                    channel_data = output_noise_tensor[:, c, :, :]
-                    if channel_data.numel() > 0:
-                        mean = torch.mean(channel_data)
-                        std = torch.std(channel_data)
-                        if std > 1e-6:
-                            output_noise_tensor[:, c, :, :] = (
-                                channel_data - mean
-                            ) / std
+            if (
+                processed_noise_cpu.numel() > 0
+            ):  # Check if the tensor to normalize has elements
+                if self.normalization_mode == "Mean0Std1_channel":
+                    temp_normalized_channels = []
+                    for c in range(processed_noise_cpu.shape[1]):
+                        channel_data = processed_noise_cpu[:, c, :, :]
+                        if channel_data.numel() > 0:
+                            mean = torch.mean(channel_data)
+                            std = torch.std(channel_data)
+                            if std > 1e-6:
+                                temp_normalized_channels.append(
+                                    (channel_data - mean) / std
+                                )
+                            else:
+                                temp_normalized_channels.append(channel_data - mean)
                         else:
-                            output_noise_tensor[:, c, :, :] = channel_data - mean
-            elif self.normalization_mode == "Mean0Std1_tensor":
-                if output_noise_tensor.numel() > 0:
-                    mean = torch.mean(output_noise_tensor)
-                    std = torch.std(output_noise_tensor)
+                            temp_normalized_channels.append(
+                                channel_data
+                            )  # Append empty or unchanged if no elements
+                    if temp_normalized_channels:  # Ensure list is not empty
+                        processed_noise_cpu = torch.stack(
+                            [
+                                ch.to(processed_noise_cpu.device)
+                                for ch in temp_normalized_channels
+                            ],
+                            dim=1,
+                        )
+                elif self.normalization_mode == "Mean0Std1_tensor":
+                    mean = torch.mean(processed_noise_cpu)
+                    std = torch.std(processed_noise_cpu)
                     if std > 1e-6:
-                        output_noise_tensor = (output_noise_tensor - mean) / std
+                        processed_noise_cpu = (processed_noise_cpu - mean) / std
                     else:
-                        output_noise_tensor = output_noise_tensor - mean
-            elif self.normalization_mode == "ScaleToStd1_channel":
-                for c in range(output_noise_tensor.shape[1]):
-                    channel_data = output_noise_tensor[:, c, :, :]
-                    if channel_data.numel() > 0:
-                        std = torch.std(channel_data)
-                        if std > 1e-6:
-                            output_noise_tensor[:, c, :, :] = channel_data / std
-            elif self.normalization_mode == "ScaleToStd1_tensor":
-                if output_noise_tensor.numel() > 0:
-                    std = torch.std(output_noise_tensor)
+                        processed_noise_cpu = processed_noise_cpu - mean
+                elif self.normalization_mode == "ScaleToStd1_channel":
+                    temp_scaled_channels = []
+                    for c in range(processed_noise_cpu.shape[1]):
+                        channel_data = processed_noise_cpu[:, c, :, :]
+                        if channel_data.numel() > 0:
+                            std = torch.std(channel_data)
+                            if std > 1e-6:
+                                temp_scaled_channels.append(channel_data / std)
+                            else:
+                                temp_scaled_channels.append(
+                                    channel_data
+                                )  # If std is zero, keep as is
+                        else:
+                            temp_scaled_channels.append(channel_data)
+                    if temp_scaled_channels:
+                        processed_noise_cpu = torch.stack(
+                            [
+                                ch.to(processed_noise_cpu.device)
+                                for ch in temp_scaled_channels
+                            ],
+                            dim=1,
+                        )
+                elif self.normalization_mode == "ScaleToStd1_tensor":
+                    std = torch.std(processed_noise_cpu)
                     if std > 1e-6:
-                        output_noise_tensor = output_noise_tensor / std
+                        processed_noise_cpu = processed_noise_cpu / std
+            else:
+                print(
+                    f"{self.__class__.__name__}: Skipping normalization for empty tensor (blended raw)."
+                )
 
-        # Scale noise by sigma (typically sigma[0] for initial noise)
-        if sampler_sigmas is not None and len(sampler_sigmas) > 0:
-            # Ensure sigma is a scalar float and on the correct device for multiplication
-            sigma_scale = (
-                sampler_sigmas[0]
-                .to(output_noise_tensor.device, dtype=output_noise_tensor.dtype)
-                .item()
-            )
-            output_noise_tensor *= sigma_scale
-            # print(f"ExecutableDCTNoise: Scaled DCT noise by sigma: {sigma_scale:.4f}")
-        else:
-            # print("ExecutableDCTNoise: Sigmas not available or empty, not scaling DCT noise.")
-            pass
+        # Move the processed (normalized blend) noise to the sampler's input tensor device
+        noise_on_sampler_device = processed_noise_cpu.to(input_samples.device)
 
-        return output_noise_tensor.to(self.device)
+        # Return the (normalized) blended noise, now on the sampler's input device.
+        # The final move to self.device (node's target device) is important.
+        return noise_on_sampler_device.to(
+            self.device
+        )  # Move to the node's target device
 
 
 class WolfDCTNoise:
@@ -281,6 +320,16 @@ class WolfDCTNoise:
                     ],
                     {"default": "Mean0Std1_channel"},
                 ),
+                "gaussian_blend_factor": (
+                    "FLOAT",
+                    {
+                        "default": 0.0,
+                        "min": 0.0,
+                        "max": 1.0,
+                        "step": 0.01,
+                        "tooltip": "0.0 for 100% DCT noise, 1.0 for 100% Gaussian noise.",
+                    },
+                ),
             },
             "optional": {
                 "model": ("MODEL",),
@@ -302,6 +351,7 @@ class WolfDCTNoise:
         ac_coeff_laplacian_scale,
         q_table_multiplier,
         normalization,
+        gaussian_blend_factor,
         model=None,
     ):
         target_device_str = ""
@@ -339,7 +389,7 @@ class WolfDCTNoise:
                 target_device_str = str(self.node_device)
 
         print(
-            f"{self.__class__.__name__}: DCT Noise generator configured for device: '{target_device_str}', seed: {seed}"
+            f"{self.__class__.__name__}: DCT Noise generator configured for device: '{target_device_str}', seed: {seed}, blend: {gaussian_blend_factor}"
         )
 
         dct_noise_generator_object = ExecutableDCTNoise(
@@ -350,6 +400,7 @@ class WolfDCTNoise:
             ac_coeff_laplacian_scale=ac_coeff_laplacian_scale,
             q_table_multiplier=q_table_multiplier,
             normalization_mode=normalization,
+            gaussian_blend_factor=gaussian_blend_factor,
             device_string=target_device_str,
             node_sigmas=sigmas,  # Pass the sigmas from the node input
         )
