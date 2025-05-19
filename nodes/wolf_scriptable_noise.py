@@ -121,7 +121,14 @@ class ExecutableScriptNoise:
     """
 
     def __init__(
-        self, script_code, seed, model, device_string, script_globals_template, sigmas
+        self,
+        script_code,
+        seed,
+        model,
+        device_string,
+        script_globals_template,
+        sigmas,
+        normalization_mode,
     ):
         self.script_code = script_code
         self.seed = seed  # This is the seed the script should primarily use
@@ -130,11 +137,78 @@ class ExecutableScriptNoise:
             device_string  # Target device for tensor creation, e.g., "cuda:0"
         )
         self.script_globals_template = script_globals_template
-        self.sigmas = sigmas  # Store sigmas
+        self.sigmas = sigmas  # Store sigmas tensor
+        self.normalization_mode = normalization_mode  # Store normalization mode
+
+    def apply_normalization(self, noise_tensor, mode):
+        """
+        Applies normalization to the noise tensor.
+        Assumes noise_tensor is on self.device_string.
+        """
+        if mode == "None" or noise_tensor.numel() == 0:
+            return noise_tensor
+
+        original_device = noise_tensor.device
+        # For simplicity and consistency with WolfDCTNoise, some ops might be easier on CPU
+        # or to ensure reproducibility if specific implementations vary by device.
+        # However, torch.mean/std are generally fine on GPU.
+        # Let's keep it on original_device unless issues arise.
+
+        processed_tensor = noise_tensor
+
+        if mode == "Mean0Std1_channel":
+            temp_normalized_channels = []
+            for c in range(noise_tensor.shape[1]):  # NCHW format, C is dim 1
+                channel_data = noise_tensor[:, c, :, :]
+                if channel_data.numel() > 0:
+                    mean = torch.mean(channel_data.float())  # Ensure float for mean/std
+                    std = torch.std(channel_data.float())
+                    if std > 1e-6:
+                        temp_normalized_channels.append((channel_data - mean) / std)
+                    else:
+                        temp_normalized_channels.append(channel_data - mean)
+                else:
+                    temp_normalized_channels.append(channel_data)
+            if temp_normalized_channels:
+                processed_tensor = torch.stack(temp_normalized_channels, dim=1).to(
+                    original_device
+                )
+        elif mode == "Mean0Std1_tensor":
+            if noise_tensor.numel() > 0:
+                mean = torch.mean(noise_tensor.float())
+                std = torch.std(noise_tensor.float())
+                if std > 1e-6:
+                    processed_tensor = (noise_tensor - mean) / std
+                else:
+                    processed_tensor = noise_tensor - mean
+        elif mode == "ScaleToStd1_channel":
+            temp_scaled_channels = []
+            for c in range(noise_tensor.shape[1]):
+                channel_data = noise_tensor[:, c, :, :]
+                if channel_data.numel() > 0:
+                    std = torch.std(channel_data.float())
+                    if std > 1e-6:
+                        temp_scaled_channels.append(channel_data / std)
+                    else:
+                        temp_scaled_channels.append(channel_data)
+                else:
+                    temp_scaled_channels.append(channel_data)
+            if temp_scaled_channels:
+                processed_tensor = torch.stack(temp_scaled_channels, dim=1).to(
+                    original_device
+                )
+        elif mode == "ScaleToStd1_tensor":
+            if noise_tensor.numel() > 0:
+                std = torch.std(noise_tensor.float())
+                if std > 1e-6:
+                    processed_tensor = noise_tensor / std
+
+        return processed_tensor.to(noise_tensor.dtype)  # Ensure original dtype
 
     def generate_noise(self, latent_image_dict):
         """
-        Executes the stored script to generate a noise tensor.
+        Executes the stored script to generate a noise tensor,
+        then optionally normalizes and scales it by sigmas[0].
         Args:
             latent_image_dict (dict): A dictionary usually containing:
                 'samples' (torch.Tensor): The latent tensor for which noise is needed.
@@ -143,6 +217,7 @@ class ExecutableScriptNoise:
         Returns:
             torch.Tensor: The generated noise tensor, on self.device_string.
         """
+        target_torch_device = torch.device(self.device_string)
 
         script_locals = {
             "latent_image": latent_image_dict,
@@ -150,12 +225,10 @@ class ExecutableScriptNoise:
             "seed": self.seed,
             "model": self.model,
             "device": self.device_string,  # Pass the device string for torch.device() in script
-            "sigmas": (
-                self.sigmas.to(torch.device(self.device_string))
-                if self.sigmas is not None
-                else None
-            ),  # Make sigmas available
-            "output_noise_tensor": None,
+            "sigmas": (  # Make full sigma schedule available to script if needed for context
+                self.sigmas.to(target_torch_device) if self.sigmas is not None else None
+            ),
+            "output_noise_tensor": None,  # This is what the script should set (base noise)
         }
 
         current_script_globals = self.script_globals_template.copy()
@@ -171,27 +244,57 @@ class ExecutableScriptNoise:
         try:
             # print(f"ExecutableScriptNoise: Executing script. Seed: {self.seed}, Device: {self.device_string}, Latent shape: {latent_image_dict['samples'].shape}")
             exec(self.script_code, current_script_globals, script_locals)
-            noise_tensor = script_locals.get("output_noise_tensor")
+            base_noise_tensor = script_locals.get("output_noise_tensor")
 
-            if noise_tensor is None:
+            if base_noise_tensor is None:
                 raise ValueError(
                     "Script did not assign a tensor to 'output_noise_tensor'."
                 )
-            if not isinstance(noise_tensor, torch.Tensor):
+            if not isinstance(base_noise_tensor, torch.Tensor):
                 raise ValueError(
-                    f"'output_noise_tensor' must be a torch.Tensor, got {type(noise_tensor)}."
+                    f"'output_noise_tensor' must be a torch.Tensor, got {type(base_noise_tensor)}."
                 )
 
-            if noise_tensor.shape != latent_image_dict["samples"].shape:
+            if base_noise_tensor.shape != latent_image_dict["samples"].shape:
                 raise ValueError(
-                    f"Generated noise tensor shape {noise_tensor.shape} does not match input latent shape {latent_image_dict['samples'].shape}."
+                    f"Generated noise tensor shape {base_noise_tensor.shape} does not match input latent shape {latent_image_dict['samples'].shape}."
                 )
 
-            # Ensure the noise tensor is on the specified device string.
-            # The script should ideally create it on this device, but this ensures it.
-            final_noise_tensor = noise_tensor.to(torch.device(self.device_string))
+            # Ensure the script's output tensor is on the specified device string.
+            base_noise_tensor_on_device = base_noise_tensor.to(target_torch_device)
 
-            return final_noise_tensor
+            # Apply normalization if requested
+            processed_noise = base_noise_tensor_on_device
+            if self.normalization_mode != "None":
+                print(f"  Applying normalization: {self.normalization_mode}")
+                processed_noise = self.apply_normalization(
+                    base_noise_tensor_on_device, self.normalization_mode
+                )
+
+            # Scale by sigmas[0] if sigmas are available
+            final_output_noise = processed_noise
+            if self.sigmas is not None and len(self.sigmas) > 0:
+                # Ensure sigmas tensor is on a compatible device for item() or direct use
+                # self.sigmas should ideally be on CPU or the target_torch_device
+                # For safety, move the specific sigma value to CPU before .item() if it's not already scalar
+                current_sigma_val = (
+                    self.sigmas[0].cpu().item()
+                    if self.sigmas[0].numel() == 1
+                    else self.sigmas[0].item()
+                )
+
+                final_output_noise = processed_noise * current_sigma_val
+                print(
+                    f"  Script output (normalized if applicable) scaled by sigmas[0]: {current_sigma_val:.4f}"
+                )
+            else:
+                print(
+                    "  Using script output (normalized if applicable) as is (no sigmas[0] scaling)."
+                )
+
+            return final_output_noise.to(
+                target_torch_device
+            )  # Ensure final tensor is on target device
 
         except Exception as e:
             print(
@@ -221,30 +324,32 @@ _DEFAULT_NOISE_SCRIPT = """# Script to generate custom noise for ComfyUI's WolfS
 # - math (module): Python's standard math module.
 # - F (module): torch.nn.functional.
 # - sigmas (tensor): The sigma schedule (if SIGMAS input is connected to the node).
+#                    This is for context; scaling by sigmas[0] is now handled by the node post-script.
 # - rand_perlin_2d_octaves_fn, rand_perlin_2d_fn, _fade_fn: Perlin noise functions.
 #
-# The script MUST assign the final noise tensor to a variable named 'output_noise_tensor'.
+# The script MUST assign the final "base" noise tensor to 'output_noise_tensor'.
 # This tensor should:
 #   1. Have the same shape as 'input_samples'.
 #   2. Have the same dtype as 'input_samples'.
 #   3. Be on the torch device specified by the 'device' string.
+#   4. Represent the base noise before any sigmas[0] scaling (node handles this).
+#
+# Post-script processing by the node:
+#   1. Optional normalization (if selected in node UI).
+#   2. Scaling by sigmas[0] (if sigmas are available to the node).
 
-print(f"WolfScriptableNoise Script: Generating noise. Latent shape: {input_samples.shape}, Seed: {seed}, Device: {device}")
+print(f"WolfScriptableNoise Script: Generating base noise. Latent shape: {input_samples.shape}, Seed: {seed}, Device: {device}")
 if sigmas is not None:
-    print(f"  Sigmas available, first sigma: {sigmas[0].item() if len(sigmas) > 0 else 'empty'}")
+    print(f"  Sigmas available to script for context, first sigma: {sigmas[0].item() if len(sigmas) > 0 else 'empty'}")
 else:
-    print("  Sigmas not available to the script (SIGMAS input likely not connected).")
+    print("  Sigmas not available to the script (SIGMAS input likely not connected or empty).")
 
-# Default: Gaussian noise, scaled by sigmas[0] if available, otherwise N(0,1)
+# Default: Gaussian noise N(0,1)
 noise_gen = torch.Generator(device=torch.device(device)).manual_seed(seed)
 gaussian_noise = torch.randn(input_samples.shape, generator=noise_gen, dtype=input_samples.dtype, device=torch.device(device))
 
-if sigmas is not None and len(sigmas) > 0:
-    output_noise_tensor = gaussian_noise * sigmas[0].item()
-    print(f"  Scaled Gaussian noise by sigmas[0]: {sigmas[0].item():.4f}")
-else:
-    output_noise_tensor = gaussian_noise
-    print("  Using unscaled N(0,1) Gaussian noise.")
+output_noise_tensor = gaussian_noise
+print("  Script outputting N(0,1) Gaussian noise as 'output_noise_tensor'. Node will handle normalization and sigmas[0] scaling.")
 """
 
 
@@ -293,6 +398,19 @@ class WolfScriptableNoise:
                         "tooltip": "Python script to generate noise.",
                     },
                 ),
+                "normalization_mode": (  # New input
+                    [
+                        "None",
+                        "Mean0Std1_channel",
+                        "Mean0Std1_tensor",
+                        "ScaleToStd1_channel",
+                        "ScaleToStd1_tensor",
+                    ],
+                    {
+                        "default": "None",
+                        "tooltip": "Normalization to apply to the script's base noise output.",
+                    },
+                ),
             },
             "optional": {
                 "model": (
@@ -309,7 +427,13 @@ class WolfScriptableNoise:
     CATEGORY = "sampling/custom_sampling/noise"  # Consistent with ComfyUI's RandomNoise, DisableNoise
 
     def create_noise_generator(
-        self, seed, sigmas, device_selection, script, model=None
+        self,
+        seed,
+        sigmas,
+        device_selection,
+        script,
+        normalization_mode,
+        model=None,  # Added normalization_mode
     ):
 
         target_device_str = ""
@@ -356,7 +480,7 @@ class WolfScriptableNoise:
                 target_device_str = str(self.node_device)
 
         print(
-            f"{self.__class__.__name__}: Noise generator configured for device: '{target_device_str}', seed: {seed}"
+            f"{self.__class__.__name__}: Noise generator configured for device: '{target_device_str}', seed: {seed}, normalization: '{normalization_mode}'"
         )
         if sigmas is not None:
             print(
@@ -403,6 +527,7 @@ class WolfScriptableNoise:
             device_string=target_device_str,
             script_globals_template=script_globals_template,
             sigmas=sigmas,  # Pass sigmas here
+            normalization_mode=normalization_mode,  # Pass normalization_mode
         )
         return (noise_generator_object,)
 

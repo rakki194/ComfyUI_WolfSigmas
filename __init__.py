@@ -24,8 +24,15 @@ from .nodes.wolf_scriptable_empty_latent import WolfScriptableEmptyLatent
 from .nodes.wolf_simple_scriptable_empty_latent import WolfSimpleScriptableEmptyLatent
 from .nodes.wolf_scriptable_noise import WolfScriptableNoise
 from .nodes.wolf_scriptable_latent_analyzer import WolfScriptableLatentAnalyzer
-from .nodes.dct_noise_scriptable_latent import WolfDCTNoiseScriptableLatent
 from .nodes.wolf_dct_noise import WolfDCTNoise
+from .nodes.wolf_plot_noise import (
+    WolfPlotNoise,
+    MATPLOTLIB_AVAILABLE as PLOT_NOISE_MATPLOTLIB_AVAILABLE,
+)
+from .nodes.wolf_sampler_custom_advanced_plotter import (
+    WolfSamplerCustomAdvancedPlotter,
+    MATPLOTLIB_AVAILABLE_WOLF_PLOTTER,
+)
 from .nodes.modify_activations_svd import ModifyActivationsSVD
 from .nodes.latent_visualize import LatentVisualizeDirect
 from .nodes.wolf_probe import WolfProbeNode, WolfProbeGetDataNode
@@ -60,7 +67,6 @@ NODE_CLASS_MAPPINGS = {
     "WolfSimpleScriptableEmptyLatent": WolfSimpleScriptableEmptyLatent,
     "WolfScriptableNoise": WolfScriptableNoise,
     "WolfScriptableLatentAnalyzer": WolfScriptableLatentAnalyzer,
-    "WolfDCTNoiseScriptableLatent": WolfDCTNoiseScriptableLatent,
     "WolfDCTNoise": WolfDCTNoise,
     "ModifyActivationsSVD": ModifyActivationsSVD,
     "LatentVisualizeDirect": LatentVisualizeDirect,
@@ -69,6 +75,7 @@ NODE_CLASS_MAPPINGS = {
     "ListModelBlocks": ListModelBlocks,
     "GetImageSize": GetImageSize,
     "VisualizeActivation": VisualizeActivation,
+    "WolfSamplerCustomAdvancedPlotter": WolfSamplerCustomAdvancedPlotter,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -98,8 +105,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "WolfSimpleScriptableEmptyLatent": "Simple Scriptable Empty Latent (🐺)",
     "WolfScriptableNoise": "Scriptable Noise (🐺)",
     "WolfScriptableLatentAnalyzer": "Wolf Scriptable Latent Analyzer (🐺)",
-    "WolfDCTNoiseScriptableLatent": "DCT Noise Latent (Wolf)",
-    "WolfDCTNoise": "DCT Noise (Wolf)",
+    "WolfDCTNoise": "DCT Noise (🐺)",
     "ModifyActivationsSVD": "Modify Activations (SVD)",
     "LatentVisualizeDirect": "Latent Visualize (Direct)",
     "WolfProbeSetup": "Wolf Probe Setup (Debug V2)",
@@ -107,7 +113,22 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ListModelBlocks": "List Model Blocks",
     "GetImageSize": "Get Image Size",
     "VisualizeActivation": "Visualize Activation (🐺)",
+    "WolfSamplerCustomAdvancedPlotter": "Sampler Custom Advanced Plotter (🐺)",
 }
 
 WEB_DIRECTORY = "./web"
+
+# Conditional registration based on matplotlib availability for WolfPlotNoise
+if PLOT_NOISE_MATPLOTLIB_AVAILABLE:
+    NODE_CLASS_MAPPINGS["WolfPlotNoise"] = WolfPlotNoise
+    NODE_DISPLAY_NAME_MAPPINGS["WolfPlotNoise"] = "Plot Noise (🐺)"
+
+if MATPLOTLIB_AVAILABLE_WOLF_PLOTTER:
+    NODE_CLASS_MAPPINGS["WolfSamplerCustomAdvancedPlotter"] = (
+        WolfSamplerCustomAdvancedPlotter
+    )
+    NODE_DISPLAY_NAME_MAPPINGS["WolfSamplerCustomAdvancedPlotter"] = (
+        "Sampler Custom Advanced Plotter (🐺)"
+    )
+
 __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS", "WEB_DIRECTORY"]

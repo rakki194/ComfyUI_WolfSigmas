@@ -63,7 +63,7 @@ This custom node pack for ComfyUI provides a suite of tools for generating and m
       - [Scripting Environment (`generate_noise` method execution)](#scripting-environment-generate_noise-method-execution)
       - [Default Script: Basic Gaussian Noise](#default-script-basic-gaussian-noise)
       - [Potential Use Cases](#potential-use-cases)
-    - [DCT Noise (Wolf) (🐺)](#dct-noise-wolf-)
+    - [DCT Noise (🐺)](#dct-noise-)
       - [DCT Noise Inputs](#dct-noise-inputs)
       - [DCT Noise Outputs](#dct-noise-outputs)
       - [How it Works](#how-it-works-1)
@@ -80,7 +80,7 @@ This custom node pack for ComfyUI provides a suite of tools for generating and m
       - [Simple Outputs](#simple-outputs)
       - [Simple Scripting Environment](#simple-scripting-environment)
       - [Default Script: Model-Aware Zero Latent](#default-script-model-aware-zero-latent)
-    - [DCT Noise Latent (Wolf) (🐺)](#dct-noise-latent-wolf-)
+    - [DCT Noise Latent (🐺)](#dct-noise-latent-)
       - [DCT Noise Latent Inputs](#dct-noise-latent-inputs)
       - [DCT Noise Latent Outputs](#dct-noise-latent-outputs)
       - [How it Works](#how-it-works-2)
@@ -111,9 +111,6 @@ This custom node pack for ComfyUI provides a suite of tools for generating and m
       - [Get Image Size Features](#get-image-size-features)
       - [Usage](#usage)
       - [Example Workflow](#example-workflow)
-    - [Image Compare (🐺)](#image-compare-)
-      - [Image Compare Features](#image-compare-features)
-      - [Image Compare Usage](#image-compare-usage)
 
 ---
 
@@ -567,10 +564,10 @@ This script generates standard Gaussian noise $\mathcal{N}(0, 1)$ matching the s
 - **Noise Debugging:** Insert print statements or calculations within the noise generation script to check its statistical properties (e.g., mean, std) before it's used by the sampler.
 - **Conditional Noise:** Generate different types of noise based on inputs like `sigmas`, `model` properties, or even `batch_index`.
 
-### DCT Noise (Wolf) (🐺)
+### DCT Noise (🐺)
 
 - **Class:** `WolfDCTNoise`
-- **Display Name:** `DCT Noise (Wolf)`
+- **Display Name:** `DCT Noise (🐺)`
 - **Category:** `sampling/custom_sampling/noise`
 - **Description:** Returns a custom `NOISE` object that, when invoked by a sampler, generates DCT (Discrete Cosine Transform)-based noise. This noise is characterized by JPEG-like compression artifacts and can be controlled by various parameters. The generated noise is automatically scaled by the current sigma value (typically `sigmas[0]`) provided by the sampler.
 
@@ -795,10 +792,10 @@ The default script generates a zero-filled latent tensor with dimensions appropr
 
 This provides a basic, flexible starting point for latent generation, particularly useful for ensuring compatibility with models requiring different latent channel depths.
 
-### DCT Noise Latent (Wolf) (🐺)
+### DCT Noise Latent (🐺)
 
 - **Class:** `WolfDCTNoiseScriptableLatent`
-- **Display Name:** `DCT Noise Latent (Wolf)`
+- **Display Name:** `DCT Noise Latent (🐺)`
 - **Category:** `latent/noise`
 - **Description:** Generates an initial latent tensor using DCT (Discrete Cosine Transform)-based noise synthesis. This method aims to produce noise with characteristics similar to JPEG compression artifacts. The properties of the generated noise, such as the strength and smoothness of block-like patterns, can be controlled through various input parameters. This node is useful for initializing the diffusion process with a specific kind of textured noise rather than standard Gaussian noise or zeros.
 
@@ -1164,30 +1161,3 @@ Simply connect an image output from another node to the `image` input of the "Ge
                          |
                          +--> (Connect width/height/count to other nodes)
 ```
-
-### Image Compare (🐺)
-
-- **Class:** `ComfyUIImageCompare` (Note: The Python class name is `ComfyUIImageCompare`, the display name is `Image Compare (🐺)`)
-- **Display Name:** `Image Compare (🐺)`
-- **Category:** `ComfyUI-ImageCompare` (Note: The Python code sets this as the category)
-
-A simple custom node for [ComfyUI](https://github.com/comfyanonymous/ComfyUI) that allows you to compare two images (or batches of images) side-by-side within the UI.
-
-This node is useful for visually inspecting differences or similarities between images generated at different steps of a workflow, or comparing outputs from different models or prompts.
-
-#### Image Compare Features
-
-- Displays two input images (A and B) next to each other.
-- Supports single images and batches.
-- Integrates directly into the ComfyUI interface.
-
-#### Image Compare Usage
-
-1. Add the "Image Compare (🐺)" node to your workflow (you can find it under the "ComfyUI-ImageCompare" category or by searching).
-2. Connect an image output to the `image_a` input.
-3. Connect another image output to the `image_b` input.
-4. Queue your prompt. When the workflow reaches the Image Compare node, the images will be displayed side-by-side in the node's interface.
-
-*Note: This node saves temporary preview images similar to the built-in PreviewImage/SaveImage nodes to display them in the UI.*
-
----

@@ -408,4 +408,4 @@ class WolfDCTNoise:
 
 
 NODE_CLASS_MAPPINGS = {"WolfDCTNoise": WolfDCTNoise}
-NODE_DISPLAY_NAME_MAPPINGS = {"WolfDCTNoise": "DCT Noise (Wolf)"}
+NODE_DISPLAY_NAME_MAPPINGS = {"WolfDCTNoise": "DCT Noise (🐺)"}
