@@ -68,7 +68,7 @@ class WolfSamplerCustomAdvancedPlotter:
                 ),
                 "plot_title_text": (
                     "STRING",
-                    {"default": "Denoised Latent Timesteps (🐺)"},
+                    {"default": "Denoised Latent Timesteps"},
                 ),
                 "plot_figure_width": (
                     "FLOAT",
@@ -122,7 +122,7 @@ class WolfSamplerCustomAdvancedPlotter:
         plot_channel_index=0,
         plot_colormap="gray",
         plot_grid_cols=4,
-        plot_title_text="Denoised Latent Timesteps (🐺)",
+        plot_title_text="Denoised Latent Timesteps",
         plot_figure_width=15.0,
         plot_figure_height_scale=1.0,
         plot_dpi=100,
