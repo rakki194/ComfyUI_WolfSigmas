@@ -108,7 +108,7 @@ class WolfPlotNoise:
     FUNCTION = "plot_noise"
     CATEGORY = "debug/visualize_wolf"
 
-    def plot_single_noise(
+    def plot_noise(
         self,
         noise_provider,
         sigmas,

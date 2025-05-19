@@ -171,10 +171,30 @@ class WolfSamplerCustomAdvancedPlotter:
             num_preview_steps if num_preview_steps > 0 else 1
         )  # ensure pbar has at least 1 total step
 
-        def combined_callback(S_dict):
+        def combined_callback(*args, **kwargs):
+            # Handle both possible callback signatures
+            if len(args) == 1 and isinstance(args[0], dict):
+                S_dict = args[0]
+            elif len(args) == 4:
+                i, denoised, x, total_steps = args
+                S_dict = {
+                    "i": i,
+                    "denoised": denoised,
+                    "x": x,
+                    "total_steps": total_steps,
+                    # Optionally add more keys if needed
+                }
+            else:
+                raise ValueError(f"Unexpected callback arguments: {args} {kwargs}")
+
             # Call original preview callback for final x0
             if original_callback_for_x0 is not None:
-                original_callback_for_x0(S_dict)
+                original_callback_for_x0(
+                    S_dict["i"],
+                    S_dict["denoised"],
+                    S_dict["x"],
+                    S_dict.get("total_steps", num_preview_steps),
+                )
 
             current_step_index = S_dict["i"]
             total_steps_for_pbar = num_preview_steps if num_preview_steps > 0 else 1
@@ -204,7 +224,15 @@ class WolfSamplerCustomAdvancedPlotter:
                         actual_batch_idx, actual_channel_idx, :, :
                     ].cpu()
                     collected_denoised_latents_for_plot.append(denoised_slice)
-                    collected_sigmas_for_plot.append(S_dict["sigma"].item())
+                    # Try to get sigma if present, else fallback
+                    sigma = S_dict.get("sigma")
+                    if sigma is not None:
+                        if hasattr(sigma, "item"):
+                            collected_sigmas_for_plot.append(sigma.item())
+                        else:
+                            collected_sigmas_for_plot.append(float(sigma))
+                    else:
+                        collected_sigmas_for_plot.append(0.0)
 
         disable_pbar_flag = not comfy.utils.PROGRESS_BAR_ENABLED
 
