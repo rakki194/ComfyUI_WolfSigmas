@@ -221,6 +221,59 @@ This node is invaluable for debugging model behavior, understanding what feature
 
 ---
 
+### Using Visualize Activation with DiT/Chroma/Flux Models
+
+The `Visualize Activation (🐺)` node can be used to inspect activations in DiT-based models such as Chroma and Flux, but these models require special handling due to their architecture and the way latents and sigmas are managed in multi-step workflows.
+
+#### Why Special Handling is Needed
+
+- **DiT/Chroma/Flux models** use a patchified latent input and often require both a "partially denoised" latent and the *correct* sigma value for the next denoising step.
+- In workflows that split the denoising process (e.g., for intermediate inspection or custom sampling), you must ensure the latent and sigma you provide to the Visualize Activation node match the model's expectations for that specific step.
+
+#### How to Connect the Node
+
+1. **Latent Input:**
+   - Use the output latent from a KSampler (or similar node) that has performed *partial* denoising (i.e., not the initial noise, but not fully denoised either).
+   - This latent should represent the state at the step you want to visualize.
+2. **Sigma Input:**
+   - Provide the *next* sigma value that would be used by the following KSampler step.
+   - In split sigma workflows, this is typically the sigma at the index after your current denoising step.
+   - You can use a `Sigma Slice` or similar node to extract the correct sigma from your schedule.
+3. **Conditioning Input:**
+   - Pass the same conditioning used for your model (e.g., from your text encoder or other conditioning node).
+   - For Chroma/Flux, the node will automatically prepare the correct context/y inputs.
+4. **Model Input:**
+   - Connect your loaded DiT/Chroma/Flux model as usual.
+5. **Target Block Name:**
+   - Use the string path to the module you want to probe (see the List Model Blocks node or model documentation for valid names).
+
+#### Example Workflow Structure
+
+```plaintext
+[Latent Noise/Init] → [KSampler (partial steps)] → [Visualize Activation (🐺)]
+                                              ↘ [Sigma for next step]
+[Conditioning] -------------------------------↗
+[Model Loader] -------------------------------↗
+```
+
+- The KSampler runs for N steps, producing a partially denoised latent.
+- The Visualize Activation node takes this latent, the *next* sigma, the same conditioning, and the model, and visualizes the activation at your chosen block.
+
+#### Tips & Troubleshooting
+
+- **Latent Shape:** The node will attempt to adjust latent channels for Chroma/Flux models if needed, but ensure your latent matches the expected shape for your model.
+- **Sigma Index:** Double-check that the sigma you provide matches the step you want to visualize. Off-by-one errors are common in split workflows.
+- **Depatchify:** The node will automatically depatchify activations for DiT/Chroma/Flux models for visualization.
+- **Conditioning Format:** For Chroma/Flux, the node will handle [context, y] or [context] lists automatically.
+- **Debugging:** If you see shape or type errors, verify that your latent, sigma, and conditioning are all from the same step and model.
+
+#### See Also
+
+- The `assets/dit_activations.webp` file contains a visual example of DiT/Chroma activations.
+- For more on valid block names, use the `List Model Blocks` node or inspect your model's code.
+
+---
+
 ## Experimental Model Patching
 
 ### Modify Activations (SVD) (🐺)
