@@ -155,6 +155,15 @@ def prepare_flux_conditioning(
     }
 
 
+def ensure_float32(tensor):
+    if not tensor.dtype in [torch.float32, torch.float16, torch.bfloat16]:
+        print(
+            f"[Quantized Support] Converting tensor from {tensor.dtype} to float32 for compatibility."
+        )
+        return tensor.float()
+    return tensor
+
+
 def run_forward_pass_and_capture_activation(
     model_wrapper: torch.nn.Module,
     target_block_name: str,
@@ -248,6 +257,7 @@ def run_forward_pass_and_capture_activation(
     latent_samples = (
         latent["samples"].clone().to(device=device, dtype=actual_model_dtype)
     )
+    latent_samples = ensure_float32(latent_samples)
 
     # --- Optional Noise Injection ---
     input_latent = latent_samples  # Default to original latent
@@ -260,6 +270,7 @@ def run_forward_pass_and_capture_activation(
         scaled_noise = noise * target_sigma
         # Add noise to the latent samples
         input_latent = latent_samples + scaled_noise
+        input_latent = ensure_float32(input_latent)
         print(f"Added noise with std dev (sigma) {target_sigma:.4f} to latent input.")
     else:
         print("Skipping noise injection.")
@@ -277,10 +288,11 @@ def run_forward_pass_and_capture_activation(
             if input_latent.shape[1] != expected_channels:
                 import torch.nn as nn
 
+                input_latent = ensure_float32(input_latent)
                 conv = nn.Conv2d(
                     input_latent.shape[1], expected_channels, kernel_size=1
                 )
-                conv = conv.to(device=input_latent.device, dtype=input_latent.dtype)
+                conv = conv.to(device=input_latent.device, dtype=torch.float32)
                 input_latent = conv(input_latent)
                 # print(
                 #     f"DEBUG: Adjusted latent channels from {latent_samples.shape[1]} to {expected_channels} for Chroma/Flux."
@@ -291,6 +303,7 @@ def run_forward_pass_and_capture_activation(
     sigma_tensor = torch.full(
         (input_latent.shape[0],), target_sigma, device=device, dtype=actual_model_dtype
     )
+    sigma_tensor = ensure_float32(sigma_tensor)
 
     # Prepare conditioning for SDXL or FLUX/Chroma
     model_type = type(model_wrapper.model).__name__
@@ -298,10 +311,14 @@ def run_forward_pass_and_capture_activation(
         cond_dict = prepare_flux_conditioning(
             conditioning, model_wrapper, input_latent.shape, device, actual_model_dtype
         )
+        cond_dict["context"] = ensure_float32(cond_dict["context"])
+        cond_dict["y"] = ensure_float32(cond_dict["y"])
     else:
         cond_dict = prepare_sdxl_conditioning(
             conditioning, model_wrapper, input_latent.shape, device, actual_model_dtype
         )
+        cond_dict["context"] = ensure_float32(cond_dict["context"])
+        cond_dict["y"] = ensure_float32(cond_dict["y"])
 
     # --- Execute Forward Pass with Hook ---
     handle = None
@@ -368,6 +385,7 @@ def run_forward_pass_and_capture_activation(
         )
 
     activation = activation_storage["output"]  # Return CPU float32 tensor
+    activation = ensure_float32(activation)
     # activation shape: (B, C, H, W) or (B, N, C) etc., dtype=float32, device=cpu
     # print(f"Captured activation shape: {activation.shape}, dtype: {activation.dtype}")
     # print("DEBUG: Activation min:", activation.min().item())
@@ -391,6 +409,7 @@ def _normalize_image_tensor(
     percentile-th percentile of the absolute values, then mapped to [0, 1].
     Otherwise, standard min/max normalization is used.
     """
+    tensor = ensure_float32(tensor)
     # print("DEBUG: _normalize_image_tensor input min:", tensor.min().item())
     # print("DEBUG: _normalize_image_tensor input max:", tensor.max().item())
     # print("DEBUG: _normalize_image_tensor input mean:", tensor.mean().item())
@@ -430,6 +449,7 @@ def _whiten_tensor(
     """
     Whitens a tensor (H, W) or (C, H, W) by subtracting the mean and dividing by the standard deviation.
     """
+    tensor = ensure_float32(tensor)
     if mean:
         tensor = tensor - tensor.mean()
     if std:
@@ -439,6 +459,7 @@ def _whiten_tensor(
 
 def _apply_colormap(tensor_hw: torch.Tensor, colormap: str) -> torch.Tensor:
     """Applies a colormap to a normalized single-channel tensor (H, W) -> (H, W, 3)."""
+    tensor_hw = ensure_float32(tensor_hw)
     if tensor_hw.ndim != 2:
         raise ValueError(
             f"Input tensor for colormap must be 2D (H, W), got {tensor_hw.ndim}D"
@@ -495,6 +516,7 @@ def _draw_text_on_image(
     Draws text onto a single image tensor (H, W, C) using PIL.
     Returns original tensor if font loading or drawing fails.
     """
+    img_tensor_hwc = ensure_float32(img_tensor_hwc)
     H, W, C = img_tensor_hwc.shape
     if H < 10 or W < 10:
         return img_tensor_hwc
@@ -545,6 +567,7 @@ def _arrange_images_in_grid(
     Arranges a list of (H, W, C) image tensors into a square grid.
     Adds optional padding between images.
     """
+    image_tensors_hwc = [ensure_float32(img) for img in image_tensors_hwc]
     if not image_tensors_hwc:
         return torch.zeros(
             (1, 1, 3), dtype=torch.float32
@@ -610,6 +633,7 @@ def _create_visualization_grid(
     """
     Applies colormap, optionally draws IDs, and arranges images into a grid with padding.
     """
+    normalized_images_hw = [ensure_float32(img) for img in normalized_images_hw]
     processed_images_hwc = []
     for i, img_hw in enumerate(normalized_images_hw):
         # 1. Apply Colormap
@@ -660,6 +684,7 @@ def _perform_pca(
         ValueError: If C < 2 or num_components <= 0.
         RuntimeError: If SVD fails during PCA calculation.
     """
+    activation_item_chw = ensure_float32(activation_item_chw)
     C, H, W = activation_item_chw.shape
     if C < 2:
         raise ValueError(f"PCA requires at least 2 channels, but got {C}.")
@@ -751,6 +776,7 @@ def process_transformer_activation(
     Processes 3D transformer activations by inferring spatial dimensions,
     reshaping, and then applying the chosen visualization grid method.
     """
+    activation = ensure_float32(activation)
     B = activation.shape[0]
     if B > 1:
         print("Warning: Batch size > 1. Visualizing first batch item only.")
@@ -856,6 +882,38 @@ def apply_upscaling(image_tensor: torch.Tensor, factor: int) -> torch.Tensor:
         f"Upscaled output by {factor}x to {image_output.shape[1]}x{image_output.shape[2]}"
     )
     return image_output
+
+
+# --- DePatchify for DiT/Chroma/Flux ---
+def depatchify(tokens, latent_shape, patch_size, in_channels):
+    """
+    tokens: [B, N, C*P^2]
+    latent_shape: (B, C, H, W)
+    patch_size: int
+    in_channels: int
+    Returns: [B, C, H, W]
+    """
+    B, N, CP2 = tokens.shape
+    C = in_channels
+    P = patch_size
+    H = latent_shape[2]
+    W = latent_shape[3]
+    assert CP2 == C * P * P, f"Token last dim {CP2} != C*P^2 ({C}*{P}^2)"
+    assert N == (H // P) * (
+        W // P
+    ), f"Token count {N} != (H/P)*(W/P) ({H}//{P}*{W}//{P})"
+    # Step 1: [B, N, C*P^2] -> [B, N, C, P, P]
+    x = tokens.view(B, N, C, P, P)
+    # Step 2: [B, N, C, P, P] -> [B, H//P, W//P, C, P, P]
+    x = x.view(B, H // P, W // P, C, P, P)
+    # Step 3: [B, H//P, W//P, C, P, P] -> [B, C, H//P, P, W//P, P]
+    x = x.permute(0, 3, 1, 4, 2, 5)
+    # Step 4: [B, C, H//P, P, W//P, P] -> [B, C, H, W]
+    x = x.contiguous().view(B, C, H, W)
+    print(
+        f"[DePatchify] Converted tokens [B, N, C*P^2]={tokens.shape} to [B, C, H, W]={x.shape}"
+    )
+    return x
 
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
@@ -983,6 +1041,35 @@ class VisualizeActivation:
             ),
         )
 
+        # --- DePatchify for Chroma/DiT/Flux if needed ---
+        model_type = type(model.model).__name__
+        unet_model = (
+            model.model.diffusion_model
+            if hasattr(model.model, "diffusion_model")
+            else None
+        )
+        if (
+            model_type in ["Chroma", "Flux", "DiT"]
+            and activation.ndim == 3
+            and unet_model is not None
+        ):
+            patch_size = getattr(unet_model, "patch_size", None)
+            in_channels = getattr(unet_model, "in_channels", None)
+            latent_shape = latent["samples"].shape
+            if patch_size is not None and in_channels is not None:
+                B, N, CP2 = activation.shape
+                expected_CP2 = in_channels * patch_size * patch_size
+                expected_N = (latent_shape[2] // patch_size) * (
+                    latent_shape[3] // patch_size
+                )
+                if CP2 == expected_CP2 and N == expected_N:
+                    print(
+                        f"[DePatchify] Detected DiT/Chroma/Flux activation, depatchifying..."
+                    )
+                    activation = depatchify(
+                        activation, latent_shape, patch_size, in_channels
+                    )
+
         # --- 2. Process Activation Based on Shape and Mode ---
         grid_tensor_hwc = None  # Tensor for the final grid (H_grid, W_grid, 3)
 
@@ -1067,31 +1154,6 @@ class VisualizeActivation:
 
         # --- 4. Return Result ---
         # ComfyUI expects image tensors in BHWC format, float type
-        # print(
-        #     "DEBUG: Final image_output shape:",
-        #     image_output.shape,
-        #     "dtype:",
-        #     image_output.dtype,
-        #     "min:",
-        #     image_output.min().item(),
-        #     "max:",
-        #     image_output.max().item(),
-        #     "mean:",
-        #     image_output.mean().item(),
-        #     "std:",
-        #     image_output.std().item(),
-        # )
-        # print(
-        #     "DEBUG: Final image_output contains NaN:",
-        #     bool((image_output != image_output).any()),
-        # )
-        # print(
-        #     "DEBUG: Final image_output contains Inf:",
-        #     bool(
-        #         (image_output == float("inf")).any()
-        #         or (image_output == float("-inf")).any()
-        #     ),
-        # )
         return (image_output,)
 
 
