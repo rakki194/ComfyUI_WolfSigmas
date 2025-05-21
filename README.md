@@ -34,6 +34,12 @@ This custom node pack for ComfyUI provides a suite of tools for generating and m
       - [Inputs](#inputs)
       - [Outputs](#outputs)
       - [How it Works](#how-it-works)
+      - [Using Visualize Activation with DiT/Chroma/Flux Models](#using-visualize-activation-with-ditchromaflux-models)
+        - [Why Special Handling is Needed](#why-special-handling-is-needed)
+        - [How to Connect the Node](#how-to-connect-the-node)
+        - [Example Workflow Structure](#example-workflow-structure)
+        - [Tips \& Troubleshooting](#tips--troubleshooting)
+        - [See Also](#see-also)
   - [Experimental Model Patching](#experimental-model-patching)
     - [Modify Activations (SVD) (🐺)](#modify-activations-svd-)
   - [WolfProbe (Model Debugging)](#wolfprobe-model-debugging)
@@ -219,18 +225,18 @@ This node is helpful for qualitatively assessing what features or noise patterns
 
 This node is invaluable for debugging model behavior, understanding what features different layers are learning, and verifying the impact of noise or conditioning at specific points in the UNet architecture.
 
----
-
-### Using Visualize Activation with DiT/Chroma/Flux Models
+#### Using Visualize Activation with DiT/Chroma/Flux Models
 
 The `Visualize Activation (🐺)` node can be used to inspect activations in DiT-based models such as Chroma and Flux, but these models require special handling due to their architecture and the way latents and sigmas are managed in multi-step workflows.
 
-#### Why Special Handling is Needed
+##### Why Special Handling is Needed
 
 - **DiT/Chroma/Flux models** use a patchified latent input and often require both a "partially denoised" latent and the *correct* sigma value for the next denoising step.
 - In workflows that split the denoising process (e.g., for intermediate inspection or custom sampling), you must ensure the latent and sigma you provide to the Visualize Activation node match the model's expectations for that specific step.
 
-#### How to Connect the Node
+##### How to Connect the Node
+
+![Visualize Activation with DiT/Chroma/Flux](assets/visualize_dit_chroma_flux.webp)
 
 1. **Latent Input:**
    - Use the output latent from a KSampler (or similar node) that has performed *partial* denoising (i.e., not the initial noise, but not fully denoised either).
@@ -247,19 +253,14 @@ The `Visualize Activation (🐺)` node can be used to inspect activations in DiT
 5. **Target Block Name:**
    - Use the string path to the module you want to probe (see the List Model Blocks node or model documentation for valid names).
 
-#### Example Workflow Structure
+##### Example Workflow Structure
 
-```plaintext
-[Latent Noise/Init] → [KSampler (partial steps)] → [Visualize Activation (🐺)]
-                                              ↘ [Sigma for next step]
-[Conditioning] -------------------------------↗
-[Model Loader] -------------------------------↗
-```
+![Example Workflow Structure](assets/split_dit_activations_workflow.png)
 
 - The KSampler runs for N steps, producing a partially denoised latent.
 - The Visualize Activation node takes this latent, the *next* sigma, the same conditioning, and the model, and visualizes the activation at your chosen block.
 
-#### Tips & Troubleshooting
+##### Tips & Troubleshooting
 
 - **Latent Shape:** The node will attempt to adjust latent channels for Chroma/Flux models if needed, but ensure your latent matches the expected shape for your model.
 - **Sigma Index:** Double-check that the sigma you provide matches the step you want to visualize. Off-by-one errors are common in split workflows.
@@ -267,9 +268,8 @@ The `Visualize Activation (🐺)` node can be used to inspect activations in DiT
 - **Conditioning Format:** For Chroma/Flux, the node will handle [context, y] or [context] lists automatically.
 - **Debugging:** If you see shape or type errors, verify that your latent, sigma, and conditioning are all from the same step and model.
 
-#### See Also
+##### See Also
 
-- The `assets/dit_activations.webp` file contains a visual example of DiT/Chroma activations.
 - For more on valid block names, use the `List Model Blocks` node or inspect your model's code.
 
 ---
