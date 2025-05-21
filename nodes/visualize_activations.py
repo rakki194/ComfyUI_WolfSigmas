@@ -1067,31 +1067,31 @@ class VisualizeActivation:
 
         # --- 4. Return Result ---
         # ComfyUI expects image tensors in BHWC format, float type
-        print(
-            "DEBUG: Final image_output shape:",
-            image_output.shape,
-            "dtype:",
-            image_output.dtype,
-            "min:",
-            image_output.min().item(),
-            "max:",
-            image_output.max().item(),
-            "mean:",
-            image_output.mean().item(),
-            "std:",
-            image_output.std().item(),
-        )
-        print(
-            "DEBUG: Final image_output contains NaN:",
-            bool((image_output != image_output).any()),
-        )
-        print(
-            "DEBUG: Final image_output contains Inf:",
-            bool(
-                (image_output == float("inf")).any()
-                or (image_output == float("-inf")).any()
-            ),
-        )
+        # print(
+        #     "DEBUG: Final image_output shape:",
+        #     image_output.shape,
+        #     "dtype:",
+        #     image_output.dtype,
+        #     "min:",
+        #     image_output.min().item(),
+        #     "max:",
+        #     image_output.max().item(),
+        #     "mean:",
+        #     image_output.mean().item(),
+        #     "std:",
+        #     image_output.std().item(),
+        # )
+        # print(
+        #     "DEBUG: Final image_output contains NaN:",
+        #     bool((image_output != image_output).any()),
+        # )
+        # print(
+        #     "DEBUG: Final image_output contains Inf:",
+        #     bool(
+        #         (image_output == float("inf")).any()
+        #         or (image_output == float("-inf")).any()
+        #     ),
+        # )
         return (image_output,)
 
 
