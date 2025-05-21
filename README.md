@@ -225,6 +225,9 @@ This node is helpful for qualitatively assessing what features or noise patterns
 
 This node is invaluable for debugging model behavior, understanding what features different layers are learning, and verifying the impact of noise or conditioning at specific points in the UNet architecture.
 
+> **Important Note:**
+> The need for a "partially denoised" latent when using the Visualize Activation node applies to **all diffusion models**, not just DiT/Chroma/Flux. If you input an initial (empty) latent and enable "add noise," the activations you see will correspond to the very first denoising step, where the latent is still mostly random noise. These activations are typically very fuzzy and not very informative about the model's learned features. For more meaningful visualizations, you should provide a latent that has already undergone some denoising steps (i.e., a partially denoised latent from an intermediate step in your sampler workflow). This allows you to inspect how the model processes more structured, image-like latents at later stages of the diffusion process.
+
 #### Using Visualize Activation with DiT/Chroma/Flux Models
 
 The `Visualize Activation (🐺)` node can be used to inspect activations in DiT-based models such as Chroma and Flux, but these models require special handling due to their architecture and the way latents and sigmas are managed in multi-step workflows.
