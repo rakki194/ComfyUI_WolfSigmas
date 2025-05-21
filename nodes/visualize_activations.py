@@ -122,6 +122,47 @@ def prepare_sdxl_conditioning(
     return {"context": embedding_tensor, "y": y_vector}
 
 
+def prepare_flux_conditioning(
+    conditioning: list,
+    model_wrapper: torch.nn.Module,
+    latent_shape: tuple,
+    device: torch.device,
+    dtype: torch.dtype,
+) -> dict:
+    """
+    Prepares the conditioning dictionary required for FLUX/Chroma UNet forward pass.
+    Expects conditioning to be [context, y].
+    """
+    # print("DEBUG: conditioning input for FLUX/Chroma:", conditioning)
+    # HACK: If input is SDXL-style, extract the tensor for both context and y
+    if (
+        isinstance(conditioning, list)
+        and len(conditioning) == 1
+        and isinstance(conditioning[0], list)
+    ):
+        context = conditioning[0][0]
+        y = conditioning[0][0]
+        print(
+            "WARNING: Using SDXL-style conditioning as both context and y for FLUX/Chroma (not correct for production!)"
+        )
+        context = context.to(device=device, dtype=dtype)
+        y = y.to(device=device, dtype=dtype)
+        return {"context": context, "y": y}
+    if not isinstance(conditioning, list) or len(conditioning) < 2:
+        raise TypeError(
+            "Conditioning input for FLUX/Chroma must be a list: [context, y]."
+        )
+    context = conditioning[0]
+    y = conditioning[1]
+    if context is None or y is None:
+        raise ValueError(
+            "Conditioning for FLUX/Chroma must be [context, y] and neither can be None."
+        )
+    context = context.to(device=device, dtype=dtype)
+    y = y.to(device=device, dtype=dtype)
+    return {"context": context, "y": y}
+
+
 def run_forward_pass_and_capture_activation(
     model_wrapper: torch.nn.Module,
     target_block_name: str,
@@ -237,10 +278,16 @@ def run_forward_pass_and_capture_activation(
         (input_latent.shape[0],), target_sigma, device=device, dtype=actual_model_dtype
     )
 
-    # Prepare SDXL-specific conditioning ('context' and 'y')
-    cond_dict = prepare_sdxl_conditioning(
-        conditioning, model_wrapper, input_latent.shape, device, actual_model_dtype
-    )
+    # Prepare conditioning for SDXL or FLUX/Chroma
+    model_type = type(model_wrapper.model).__name__
+    if model_type in ["Chroma", "Flux"]:
+        cond_dict = prepare_flux_conditioning(
+            conditioning, model_wrapper, input_latent.shape, device, actual_model_dtype
+        )
+    else:
+        cond_dict = prepare_sdxl_conditioning(
+            conditioning, model_wrapper, input_latent.shape, device, actual_model_dtype
+        )
 
     # --- Execute Forward Pass with Hook ---
     handle = None
@@ -253,7 +300,34 @@ def run_forward_pass_and_capture_activation(
 
         with torch.no_grad():
             # Use the (potentially noisy) input_latent
-            _ = unet_model.forward(input_latent, sigma_tensor, **cond_dict)
+            if model_type in ["Chroma", "Flux"]:
+                # Provide a dummy guidance tensor (zeros) with the same batch size as input_latent
+                batch_size = input_latent.shape[0]
+                device_ = input_latent.device
+                dtype_ = input_latent.dtype
+                guidance = torch.zeros(batch_size, device=device_, dtype=dtype_)
+                print(
+                    "DEBUG: Chroma model patch_size:",
+                    getattr(unet_model, "patch_size", "N/A"),
+                )
+                print(
+                    "DEBUG: Chroma model in_channels:",
+                    getattr(unet_model, "in_channels", "N/A"),
+                )
+                print("DEBUG: input_latent shape:", input_latent.shape)
+                print("DEBUG: input_latent dtype:", input_latent.dtype)
+                # print("DEBUG: context shape:", cond_dict["context"].shape, cond_dict["context"].dtype)
+                # print("DEBUG: y shape:", cond_dict["y"].shape, cond_dict["y"].dtype)
+                # print("DEBUG: guidance shape:", guidance.shape, guidance.dtype)
+                _ = unet_model.forward(
+                    input_latent,
+                    sigma_tensor,
+                    cond_dict["context"],
+                    cond_dict["y"],
+                    guidance,
+                )
+            else:
+                _ = unet_model.forward(input_latent, sigma_tensor, **cond_dict)
 
     except Exception as e:
         print(f"Error during UNet forward pass: {e}")
@@ -757,6 +831,7 @@ class VisualizeActivation:
                 "conditioning": ("CONDITIONING",),
                 "sigmas": ("SIGMAS",),
                 "target_block_name": (common_blocks,),
+                "custom_block_name": ("STRING", {"default": "", "multiline": False}),
                 "visualization_mode": (["Channel Grid", "PCA Grid"],),
                 "num_components": (
                     "INT",
@@ -799,6 +874,7 @@ class VisualizeActivation:
         conditioning,
         sigmas,
         target_block_name,
+        custom_block_name,
         visualization_mode,
         num_components,  # Unified parameter
         colormap,  # New parameter
@@ -811,6 +887,10 @@ class VisualizeActivation:
         padding_y=2,  # Added
         padding_color="Black",  # Added
     ):
+        # Use custom_block_name if 'Not Listed (Enter Manually)' is selected
+        if target_block_name == "Not Listed (Enter Manually)" and custom_block_name:
+            target_block_name = custom_block_name
+
         # --- 1. Run Forward Pass and Capture Activation (potentially with added noise) ---
         activation = run_forward_pass_and_capture_activation(
             model_wrapper=model,
