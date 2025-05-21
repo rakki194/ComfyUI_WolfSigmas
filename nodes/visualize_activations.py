@@ -1123,19 +1123,103 @@ class VisualizeActivation:
             )
 
         elif activation.ndim == 3:
-            # --- Handle 3D Transformer Activations (B, N, C) or (B, C, N) ---
+            # --- Handle 3D Transformer or SingleStream Activations (B, N, C) or (B, C, N) ---
             print(
-                f"Processing 3D transformer activation (shape: {activation.shape}) with mode '{visualization_mode}' and colormap '{colormap}'."
+                f"Processing 3D transformer/single_block activation (shape: {activation.shape}) with mode '{visualization_mode}' and colormap '{colormap}'."
             )
-            # Reshape and apply grid/PCA logic using num_components
-            grid_tensor_hwc = process_transformer_activation(
-                activation=activation,  # CPU tensor
-                latent_shape=latent["samples"].shape,  # Pass original latent shape
-                visualization_mode=visualization_mode,  # "Channel Grid" or "PCA Grid"
-                num_components=num_components,  # Limits channels or PCA components after reshape
-                render_ids=render_ids,
-                colormap=colormap,
-                percentile=normalization_percentile,  # Pass percentile
+            B, dim1, dim2 = activation.shape
+            latent_shape = latent["samples"].shape
+            H_lat, W_lat = latent_shape[2], latent_shape[3]
+            num_patches = H_lat * W_lat
+            if dim1 == num_patches:
+                N, C = dim1, dim2
+                act_item_nc = activation[0]
+            elif dim2 == num_patches:
+                N, C = dim2, dim1
+                act_item_nc = activation[0].transpose(0, 1)
+            else:
+                N, C = dim1, dim2
+                act_item_nc = activation[0]
+                print(
+                    f"Warning: Token count {N} does not match latent grid {H_lat}x{W_lat} (H*W={num_patches}). Visualization may not be spatially meaningful."
+                )
+                # Show summary statistics instead of grid
+                mean_val = act_item_nc.mean().item()
+                std_val = act_item_nc.std().item()
+                min_val = act_item_nc.min().item()
+                max_val = act_item_nc.max().item()
+                print(
+                    f"Activation summary: mean={mean_val:.4f}, std={std_val:.4f}, min={min_val:.4f}, max={max_val:.4f}"
+                )
+                # Optionally, visualize mean across tokens as a 1D bar (as an image)
+                mean_per_channel = act_item_nc.mean(dim=0).cpu()
+                # Normalize to [0,1] for visualization
+                mean_norm = (mean_per_channel - mean_per_channel.min()) / (
+                    mean_per_channel.max() - mean_per_channel.min() + 1e-6
+                )
+                # Create a 1D bar image (height=32, width=C)
+                bar_img = (
+                    mean_norm.unsqueeze(0).repeat(32, 1).unsqueeze(-1).repeat(1, 1, 3)
+                )
+                grid_tensor_hwc = bar_img  # (32, C, 3)
+                image_output_no_upscale = grid_tensor_hwc.unsqueeze(0)
+                image_output = apply_upscaling(image_output_no_upscale, upscale_factor)
+                return (image_output,)
+
+            # If we get here, N matches H*W, so proceed with grid visualization
+            def infer_hw(N, H_lat, W_lat):
+                aspect = H_lat / W_lat if W_lat != 0 else 1.0
+                best_h, best_w = 1, N
+                min_diff = abs((best_h / best_w) - aspect)
+                for h in range(1, int(N**0.5) + 1):
+                    if N % h == 0:
+                        w = N // h
+                        diff = abs((h / w) - aspect)
+                        if diff < min_diff:
+                            min_diff = diff
+                            best_h, best_w = h, w
+                return best_h, best_w
+
+            H_p, W_p = infer_hw(N, H_lat, W_lat)
+            try:
+                activation_reshaped_chw = (
+                    act_item_nc.reshape(H_p, W_p, C).permute(2, 0, 1).contiguous()
+                )
+            except Exception as e:
+                raise RuntimeError(
+                    f"Failed to reshape 3D activation (N={N}, C={C}) to (C, H', W') with H'={H_p}, W'={W_p}: {e}"
+                )
+            print(f"Reshaped 3D activation to spatial format: ({C}, {H_p}, {W_p})")
+            grid_tensor_hwc = None
+            normalized_images_hw = []
+            id_prefix = ""
+            if visualization_mode == "Channel Grid":
+                num_to_show = min(num_components, C)
+                if num_to_show == 0:
+                    print("Warning: num_components is 0.")
+                for c_idx in range(num_to_show):
+                    channel_data = activation_reshaped_chw[c_idx]
+                    normalized_images_hw.append(
+                        _normalize_image_tensor(channel_data, normalization_percentile)
+                    )
+                id_prefix = ""
+            elif visualization_mode == "PCA Grid":
+                normalized_images_hw = _perform_pca(
+                    activation_reshaped_chw, num_components, normalization_percentile
+                )
+                id_prefix = "PC "
+            else:
+                raise ValueError(
+                    f"Unsupported visualization_mode: {visualization_mode}"
+                )
+            grid_tensor_hwc = _create_visualization_grid(
+                normalized_images_hw,
+                colormap,
+                render_ids,
+                padding_x,
+                padding_y,
+                padding_color,
+                id_prefix,
             )
 
         else:
