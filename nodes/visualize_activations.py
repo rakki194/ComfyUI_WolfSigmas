@@ -131,36 +131,28 @@ def prepare_flux_conditioning(
 ) -> dict:
     """
     Prepares the conditioning dictionary required for FLUX/Chroma UNet forward pass.
-    Expects conditioning to be [context, y].
+    Expects conditioning to be [context, y] or [context] (in which case y is mean-pooled context).
     """
-    # print("DEBUG: conditioning input for FLUX/Chroma:", conditioning)
-    # HACK: If input is SDXL-style, extract the tensor for both context and y
-    if (
-        isinstance(conditioning, list)
-        and len(conditioning) == 1
-        and isinstance(conditioning[0], list)
-    ):
-        context = conditioning[0][0]
-        y = conditioning[0][0]
-        print(
-            "WARNING: Using SDXL-style conditioning as both context and y for FLUX/Chroma (not correct for production!)"
-        )
-        context = context.to(device=device, dtype=dtype)
-        y = y.to(device=device, dtype=dtype)
-        return {"context": context, "y": y}
-    if not isinstance(conditioning, list) or len(conditioning) < 2:
-        raise TypeError(
-            "Conditioning input for FLUX/Chroma must be a list: [context, y]."
-        )
-    context = conditioning[0]
-    y = conditioning[1]
-    if context is None or y is None:
-        raise ValueError(
-            "Conditioning for FLUX/Chroma must be [context, y] and neither can be None."
-        )
-    context = context.to(device=device, dtype=dtype)
-    y = y.to(device=device, dtype=dtype)
-    return {"context": context, "y": y}
+    if isinstance(conditioning, list):
+        if len(conditioning) == 1:
+            context = conditioning[0]
+            if isinstance(context, list):
+                # If context is a list, take the first tensor
+                context = context[0]
+            # Use mean pooling over tokens for y
+            y = context.mean(dim=1, keepdim=True)
+            print("INFO: Using mean-pooled context as y for Chroma.")
+        elif len(conditioning) >= 2:
+            context, y = conditioning[:2]
+        else:
+            raise TypeError(
+                "Conditioning input for FLUX/Chroma must be a list: [context, y] or [context]."
+            )
+
+    return {
+        "context": context.to(device=device, dtype=dtype),
+        "y": y.to(device=device, dtype=dtype),
+    }
 
 
 def run_forward_pass_and_capture_activation(
@@ -273,6 +265,28 @@ def run_forward_pass_and_capture_activation(
         print("Skipping noise injection.")
     # -----------------------------
 
+    # Adjust latent channels for Chroma/Flux if needed
+    model_type = type(model_wrapper.model).__name__
+    if model_type in ["Chroma", "Flux"]:
+        chroma_in_channels = getattr(unet_model, "in_channels", None)
+        chroma_patch_size = getattr(unet_model, "patch_size", None)
+        if chroma_in_channels is not None and chroma_patch_size is not None:
+            expected_channels = chroma_in_channels // (
+                chroma_patch_size * chroma_patch_size
+            )
+            if input_latent.shape[1] != expected_channels:
+                import torch.nn as nn
+
+                conv = nn.Conv2d(
+                    input_latent.shape[1], expected_channels, kernel_size=1
+                )
+                conv = conv.to(device=input_latent.device, dtype=input_latent.dtype)
+                input_latent = conv(input_latent)
+                # print(
+                #     f"DEBUG: Adjusted latent channels from {latent_samples.shape[1]} to {expected_channels} for Chroma/Flux."
+                # )
+                # print("DEBUG: New input_latent shape:", input_latent.shape)
+
     # Create sigma tensor matching batch size, on device, with correct dtype
     sigma_tensor = torch.full(
         (input_latent.shape[0],), target_sigma, device=device, dtype=actual_model_dtype
@@ -306,19 +320,27 @@ def run_forward_pass_and_capture_activation(
                 device_ = input_latent.device
                 dtype_ = input_latent.dtype
                 guidance = torch.zeros(batch_size, device=device_, dtype=dtype_)
-                print(
-                    "DEBUG: Chroma model patch_size:",
-                    getattr(unet_model, "patch_size", "N/A"),
-                )
-                print(
-                    "DEBUG: Chroma model in_channels:",
-                    getattr(unet_model, "in_channels", "N/A"),
-                )
-                print("DEBUG: input_latent shape:", input_latent.shape)
-                print("DEBUG: input_latent dtype:", input_latent.dtype)
-                # print("DEBUG: context shape:", cond_dict["context"].shape, cond_dict["context"].dtype)
-                # print("DEBUG: y shape:", cond_dict["y"].shape, cond_dict["y"].dtype)
-                # print("DEBUG: guidance shape:", guidance.shape, guidance.dtype)
+                # Ensure all tensors are on the same device as the model
+                model_device = next(unet_model.parameters()).device
+                input_latent = input_latent.to(model_device)
+                sigma_tensor = sigma_tensor.to(model_device)
+                cond_dict["context"] = cond_dict["context"].to(model_device)
+                cond_dict["y"] = cond_dict["y"].to(model_device)
+                guidance = guidance.to(model_device)
+                # print(
+                #     "DEBUG: input_latent shape:", input_latent.shape, type(input_latent)
+                # )
+                # print(
+                #     "DEBUG: sigma_tensor shape:", sigma_tensor.shape, type(sigma_tensor)
+                # )
+                # print(
+                #     "DEBUG: context shape:",
+                #     cond_dict["context"].shape,
+                #     type(cond_dict["context"]),
+                # )
+                # print("DEBUG: y shape:", cond_dict["y"].shape, type(cond_dict["y"]))
+                # print("DEBUG: guidance shape:", guidance.shape, type(guidance))
+                # print("DEBUG: guidance value:", guidance)
                 _ = unet_model.forward(
                     input_latent,
                     sigma_tensor,
@@ -345,7 +367,19 @@ def run_forward_pass_and_capture_activation(
             f"Hook failed to capture any activation from '{target_block_name}'. Check layer type/output."
         )
 
-    return activation_storage["output"]  # Return CPU float32 tensor
+    activation = activation_storage["output"]  # Return CPU float32 tensor
+    # activation shape: (B, C, H, W) or (B, N, C) etc., dtype=float32, device=cpu
+    # print(f"Captured activation shape: {activation.shape}, dtype: {activation.dtype}")
+    # print("DEBUG: Activation min:", activation.min().item())
+    # print("DEBUG: Activation max:", activation.max().item())
+    # print("DEBUG: Activation mean:", activation.mean().item())
+    # print("DEBUG: Activation std:", activation.std().item())
+    # print("DEBUG: Activation contains NaN:", bool((activation != activation).any()))
+    # print(
+    #     "DEBUG: Activation contains Inf:",
+    #     bool((activation == float("inf")).any() or (activation == float("-inf")).any()),
+    # )
+    return activation
 
 
 def _normalize_image_tensor(
@@ -357,6 +391,10 @@ def _normalize_image_tensor(
     percentile-th percentile of the absolute values, then mapped to [0, 1].
     Otherwise, standard min/max normalization is used.
     """
+    # print("DEBUG: _normalize_image_tensor input min:", tensor.min().item())
+    # print("DEBUG: _normalize_image_tensor input max:", tensor.max().item())
+    # print("DEBUG: _normalize_image_tensor input mean:", tensor.mean().item())
+    # print("DEBUG: _normalize_image_tensor input std:", tensor.std().item())
     if percentile < 0.0 or percentile > 100.0:
         print(f"Warning: Invalid percentile {percentile}. Using 100.0 (min/max).")
         percentile = 100.0
@@ -371,21 +409,19 @@ def _normalize_image_tensor(
     else:
         # Percentile normalization
         abs_tensor = torch.abs(tensor)
-        # Calculate the percentile value 'q' on the CPU for stability if tensor is large
-        # Use float64 for percentile calculation to avoid precision issues
         q = torch.quantile(
             abs_tensor.to(torch.float64).cpu(), percentile / 100.0
         ).item()
         q = max(q, 1e-6)  # Ensure q is not zero to avoid division by zero
-
-        # Clip tensor to [-q, q]
         clipped_tensor = torch.clamp(tensor, -q, q)
-
-        # Remap [-q, q] to [0, 1] where 0 maps to 0.5
-        # Formula: (value + q) / (2 * q)
         normalized = (clipped_tensor + q) / (2 * q)
 
-    return torch.clamp(normalized, 0.0, 1.0)
+    out = torch.clamp(normalized, 0.0, 1.0)
+    # print("DEBUG: _normalize_image_tensor output min:", out.min().item())
+    # print("DEBUG: _normalize_image_tensor output max:", out.max().item())
+    # print("DEBUG: _normalize_image_tensor output mean:", out.mean().item())
+    # print("DEBUG: _normalize_image_tensor output std:", out.std().item())
+    return out
 
 
 def _whiten_tensor(
@@ -408,7 +444,6 @@ def _apply_colormap(tensor_hw: torch.Tensor, colormap: str) -> torch.Tensor:
             f"Input tensor for colormap must be 2D (H, W), got {tensor_hw.ndim}D"
         )
     if colormap == "greyscale":
-        # Expand to (H, W, 3) grayscale
         return tensor_hw.unsqueeze(-1).repeat(1, 1, 3)
     elif colormap == "coolwarm":
         # Manual Coolwarm: 0 -> Blue, 0.5 -> White, 1 -> Red
@@ -425,8 +460,32 @@ def _apply_colormap(tensor_hw: torch.Tensor, colormap: str) -> torch.Tensor:
         rgb_tensor = torch.stack([R, G, B], dim=-1)
         return torch.clamp(rgb_tensor, 0.0, 1.0)
     else:
-        print(f"Warning: Unsupported colormap '{colormap}'. Defaulting to greyscale.")
-        return tensor_hw.unsqueeze(-1).repeat(1, 1, 3)
+        try:
+            import matplotlib
+            import matplotlib.cm
+
+            cmap = matplotlib.cm.get_cmap(colormap)
+            np_img = tensor_hw.cpu().numpy()
+            colored = cmap(np_img)[:, :, :3]  # Drop alpha
+            # print(
+            #     f"DEBUG: Colormap '{colormap}' output min: {colored.min()}, max: {colored.max()}, dtype: {colored.dtype}, shape: {colored.shape}"
+            # )
+            torch_img = torch.from_numpy(colored).float()
+            torch_img = torch.clamp(torch_img, 0.0, 1.0)
+            if torch_img.shape[-1] != 3:
+                # print(
+                #     f"Warning: Colormap output has {torch_img.shape[-1]} channels, expected 3."
+                # )
+                torch_img = torch_img[..., :3]
+            # print(
+            #     f"DEBUG: torch_img min: {torch_img.min().item()}, max: {torch_img.max().item()}, mean: {torch_img.mean().item()}, std: {torch_img.std().item()}, shape: {torch_img.shape}, dtype: {torch_img.dtype}"
+            # )
+            return torch_img
+        except Exception as e:
+            print(
+                f"Warning: Failed to apply colormap '{colormap}': {e}. Defaulting to greyscale."
+            )
+            return tensor_hw.unsqueeze(-1).repeat(1, 1, 3)
 
 
 def _draw_text_on_image(
@@ -487,7 +546,9 @@ def _arrange_images_in_grid(
     Adds optional padding between images.
     """
     if not image_tensors_hwc:
-        return torch.zeros((1, 1, 3), dtype=torch.uint8)  # Return tiny black image
+        return torch.zeros(
+            (1, 1, 3), dtype=torch.float32
+        )  # Return tiny black image as float32
 
     num_images = len(image_tensors_hwc)
     grid_size = math.ceil(math.sqrt(num_images))
@@ -501,11 +562,11 @@ def _arrange_images_in_grid(
     total_h = grid_size * img_h + (grid_size - 1) * padding_y
     total_w = grid_size * img_w + (grid_size - 1) * padding_x
 
-    # Convert padding color to tensor format (0-255)
-    pad_color_tensor = torch.tensor(padding_color_rgb, dtype=torch.uint8)
+    # Convert padding color to tensor format (0-1 float)
+    pad_color_tensor = torch.tensor(padding_color_rgb, dtype=torch.float32) / 255.0
 
-    # Create the grid tensor filled with padding color
-    grid_tensor = torch.zeros((total_h, total_w, img_c), dtype=torch.uint8)
+    # Create the grid tensor filled with padding color, float32
+    grid_tensor = torch.zeros((total_h, total_w, img_c), dtype=torch.float32)
     grid_tensor[:, :] = pad_color_tensor  # Fill with padding color
 
     current_row, current_col = 0, 0
@@ -515,6 +576,10 @@ def _arrange_images_in_grid(
                 f"Warning: Image {i} has shape {img_tensor.shape}, expected {(img_h, img_w, img_c)}. Skipping."
             )
             continue
+
+        # Ensure image is float32 in [0, 1]
+        img_tensor = img_tensor.to(dtype=torch.float32)
+        img_tensor = torch.clamp(img_tensor, 0.0, 1.0)
 
         # Calculate top-left corner for pasting the image
         paste_y = current_row * (img_h + padding_y)
@@ -537,9 +602,9 @@ def _create_visualization_grid(
     normalized_images_hw: list[torch.Tensor],
     colormap: str,
     render_ids: bool,
-    padding_x: int,  # Added
-    padding_y: int,  # Added
-    padding_color: str,  # Added ("Magenta", "Black", "White")
+    padding_x: int,
+    padding_y: int,
+    padding_color: str,
     id_prefix: str = "",
 ) -> torch.Tensor:
     """
@@ -905,6 +970,18 @@ class VisualizeActivation:
         print(
             f"Captured activation shape: {activation.shape}, dtype: {activation.dtype}"
         )
+        print("DEBUG: Activation min:", activation.min().item())
+        print("DEBUG: Activation max:", activation.max().item())
+        print("DEBUG: Activation mean:", activation.mean().item())
+        print("DEBUG: Activation std:", activation.std().item())
+        print("DEBUG: Activation contains NaN:", bool((activation != activation).any()))
+        print(
+            "DEBUG: Activation contains Inf:",
+            bool(
+                (activation == float("inf")).any()
+                or (activation == float("-inf")).any()
+            ),
+        )
 
         # --- 2. Process Activation Based on Shape and Mode ---
         grid_tensor_hwc = None  # Tensor for the final grid (H_grid, W_grid, 3)
@@ -990,6 +1067,31 @@ class VisualizeActivation:
 
         # --- 4. Return Result ---
         # ComfyUI expects image tensors in BHWC format, float type
+        print(
+            "DEBUG: Final image_output shape:",
+            image_output.shape,
+            "dtype:",
+            image_output.dtype,
+            "min:",
+            image_output.min().item(),
+            "max:",
+            image_output.max().item(),
+            "mean:",
+            image_output.mean().item(),
+            "std:",
+            image_output.std().item(),
+        )
+        print(
+            "DEBUG: Final image_output contains NaN:",
+            bool((image_output != image_output).any()),
+        )
+        print(
+            "DEBUG: Final image_output contains Inf:",
+            bool(
+                (image_output == float("inf")).any()
+                or (image_output == float("-inf")).any()
+            ),
+        )
         return (image_output,)
 
 
