@@ -236,7 +236,7 @@ The `Visualize Activation (🐺)` node can be used to inspect activations in DiT
 
 ##### How to Connect the Node
 
-![Visualize Activation with DiT/Chroma/Flux](assets/visualize_dit_chroma_flux.webp)
+![Visualize Activation with DiT/Chroma/Flux](assets/dit_activations.webp)
 
 1. **Latent Input:**
    - Use the output latent from a KSampler (or similar node) that has performed *partial* denoising (i.e., not the initial noise, but not fully denoised either).
